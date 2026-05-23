@@ -12,8 +12,8 @@ tokio = { version = "1", features = ["full"] }
 axum = { version = "0.7", features = ["json", "multipart", "ws"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sqlx = { version = "0.7", features = ["sqlite", "runtime-tokio-native-tls", "json", "chrono", "uuid", "macros"] }
-reqwest = { version = "0.12", features = ["json", "stream", "native-tls"] }
+sqlx = { version = "0.7", features = ["sqlite", "runtime-tokio-rustls", "json", "chrono", "uuid", "macros"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "charset", "http2"] }
 clap = { version = "4", features = ["derive", "env"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
