@@ -7,11 +7,13 @@ pub struct AppState {
     pub pool: SqlitePool,
     pub config: Arc<Config>,
     pub llm: Arc<LlmClient>,
+    chat_model: String,
 }
 
 impl AppState {
     pub fn new(pool: SqlitePool, config: Config, llm: LlmClient) -> Self {
-        Self { pool, config: Arc::new(config), llm: Arc::new(llm) }
+        let chat_model = config.effective_chat().model;
+        Self { pool, config: Arc::new(config), llm: Arc::new(llm), chat_model }
     }
 
     pub fn embedding_model(&self) -> &str {
@@ -19,6 +21,6 @@ impl AppState {
     }
 
     pub fn chat_model(&self) -> &str {
-        &self.config.llm.chat_model
+        &self.chat_model
     }
 }

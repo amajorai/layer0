@@ -22,20 +22,27 @@ impl LlamaServer {
         model_path: &Path,
         port: u16,
         context_length: u32,
+        embedding: bool,
     ) -> Result<Self> {
         let server_bin = find_llama_server(&config.bin_dir)?;
-        info!("starting llama-server on port {}", port);
+        info!(
+            "starting llama-server ({}) on port {}",
+            if embedding { "embeddings" } else { "chat" },
+            port
+        );
 
-        let child = Command::new(&server_bin)
-            .args([
-                "--model", &model_path.to_string_lossy(),
-                "--port", &port.to_string(),
-                "--ctx-size", &context_length.to_string(),
-                "--embedding",
-                "--parallel", "4",
-                "--log-disable",
-            ])
-            .spawn()?;
+        let mut args = vec![
+            "--model".to_string(), model_path.to_string_lossy().to_string(),
+            "--port".to_string(), port.to_string(),
+            "--ctx-size".to_string(), context_length.to_string(),
+            "--parallel".to_string(), "4".to_string(),
+            "--log-disable".to_string(),
+        ];
+        if embedding {
+            args.push("--embedding".to_string());
+        }
+
+        let child = Command::new(&server_bin).args(&args).spawn()?;
 
         std::thread::sleep(std::time::Duration::from_secs(2));
         Ok(Self { child: Some(child), port })
@@ -75,16 +82,16 @@ fn find_llama_server(bin_dir: &Path) -> Result<PathBuf> {
 }
 
 #[derive(Debug, Deserialize)]
-struct GithubRelease {
-    tag_name: String,
-    assets: Vec<GithubAsset>,
+pub(crate) struct GithubRelease {
+    pub(crate) tag_name: String,
+    pub(crate) assets: Vec<GithubAsset>,
 }
 
 #[derive(Debug, Deserialize)]
-struct GithubAsset {
-    name: String,
-    browser_download_url: String,
-    size: u64,
+pub(crate) struct GithubAsset {
+    pub(crate) name: String,
+    pub(crate) browser_download_url: String,
+    pub(crate) size: u64,
 }
 
 pub async fn install_llama_cpp(config: &InstallerConfig) -> Result<PathBuf> {
@@ -134,7 +141,7 @@ fn find_platform_asset(assets: &[GithubAsset]) -> Result<&GithubAsset> {
     .ok_or_else(|| anyhow!("no suitable llama.cpp binary for {}/{}", os, arch))
 }
 
-async fn download_bytes(client: &Client, url: &str) -> Result<bytes::Bytes> {
+pub(crate) async fn download_bytes(client: &Client, url: &str) -> Result<bytes::Bytes> {
     let mut resp = client.get(url).send().await?;
     let total = resp.content_length().unwrap_or(0);
     let mut downloaded = 0u64;
@@ -282,4 +289,116 @@ pub fn list_installed_models(models_dir: &Path) -> Result<Vec<PathBuf>> {
         .map(|e| e.path())
         .filter(|p| p.extension().map(|x| x == "gguf" || x == "bin").unwrap_or(false))
         .collect())
+}
+
+async fn llama_healthy(base_url: &str) -> bool {
+    let url = format!("{}/health", base_url.trim_end_matches('/'));
+    let client = match Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    client.get(url).send().await.map(|r| r.status().is_success()).unwrap_or(false)
+}
+
+async fn wait_for_health(base_url: &str, max_secs: u64) -> bool {
+    for _ in 0..max_secs {
+        if llama_healthy(base_url).await {
+            return true;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+    false
+}
+
+/// Frictionless startup: ensure llama.cpp + the needed default models are
+/// present, and start the local sidecar(s). Returns handles to the managed
+/// children (kept alive by the caller). Starts:
+/// - an embeddings sidecar (nomic) when embeddings are configured locally;
+/// - a chat sidecar (gemma fallback) when no remote chat key is set.
+/// Returns an empty list when auto-start is disabled.
+pub async fn ensure_ready(config: &crate::config::Config) -> Result<Vec<LlamaServer>> {
+    if !config.installer.auto_start {
+        return Ok(vec![]);
+    }
+
+    let want_embeddings = crate::config::is_local_url(&config.llm.base_url);
+    let want_chat = config.chat_uses_local_fallback();
+
+    if !want_embeddings && !want_chat {
+        return Ok(vec![]);
+    }
+
+    if find_llama_server(&config.installer.bin_dir).is_err() {
+        info!("llama.cpp not found — installing...");
+        install_llama_cpp(&config.installer).await?;
+    }
+
+    let mut servers = Vec::new();
+
+    if want_embeddings {
+        let model_path = config.installer.models_dir.join(&config.installer.embedding_file);
+        ensure_model(config, &model_path, &config.installer.embedding_repo, &config.installer.embedding_file).await?;
+
+        if llama_healthy(&config.llm.base_url).await {
+            info!("embeddings backend already running at {}", config.llm.base_url);
+        } else {
+            let s = LlamaServer::start(
+                &config.installer,
+                &model_path,
+                config.installer.llama_server_port,
+                config.llm.context_length,
+                true,
+            )?;
+            if wait_for_health(&config.llm.base_url, 30).await {
+                info!("embeddings backend ready at {}", config.llm.base_url);
+            } else {
+                info!("embeddings backend starting at {}", config.llm.base_url);
+            }
+            servers.push(s);
+        }
+    }
+
+    if want_chat {
+        let chat_url = format!("http://127.0.0.1:{}", config.installer.chat_server_port);
+        let model_path = config.installer.models_dir.join(&config.installer.chat_file);
+        ensure_model(config, &model_path, &config.installer.chat_repo, &config.installer.chat_file).await?;
+
+        if llama_healthy(&chat_url).await {
+            info!("local chat backend already running at {}", chat_url);
+        } else {
+            info!("no remote chat key set — starting local chat fallback ({})", config.installer.chat_file);
+            let s = LlamaServer::start(
+                &config.installer,
+                &model_path,
+                config.installer.chat_server_port,
+                2048,
+                false,
+            )?;
+            if wait_for_health(&chat_url, 60).await {
+                info!("local chat backend ready at {}", chat_url);
+            } else {
+                info!("local chat backend starting at {}", chat_url);
+            }
+            servers.push(s);
+        }
+    }
+
+    Ok(servers)
+}
+
+async fn ensure_model(
+    config: &crate::config::Config,
+    model_path: &Path,
+    repo: &str,
+    file: &str,
+) -> Result<()> {
+    if model_path.exists() {
+        return Ok(());
+    }
+    info!("downloading default model {}...", file);
+    download_hf_model(&config.installer, repo, file, config.installer.hf_token.as_deref()).await?;
+    Ok(())
 }

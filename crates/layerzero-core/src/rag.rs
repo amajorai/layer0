@@ -93,7 +93,8 @@ fn build_context(results: &[SearchResult]) -> String {
         .enumerate()
         .map(|(i, r)| {
             let src = r.document.source.as_deref().unwrap_or("unknown");
-            format!("[{}] (source: {}, score: {:.3})\n{}", i + 1, src, r.score, r.document.content)
+            let text = r.matched_chunk.as_deref().unwrap_or(&r.document.content);
+            format!("[{}] (source: {}, score: {:.3})\n{}", i + 1, src, r.score, text)
         })
         .collect::<Vec<_>>()
         .join("\n\n---\n\n")
@@ -120,7 +121,7 @@ async fn expand_with_graph(
         Ok(g.documents
             .into_iter()
             .filter(|d| d.id != document_id)
-            .map(|d| SearchResult { document: d, score: 0.5, rerank_score: None })
+            .map(|d| SearchResult { document: d, score: 0.5, rerank_score: None, matched_chunk: None })
             .collect())
     } else {
         Ok(vec![])

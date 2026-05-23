@@ -60,7 +60,13 @@ async fn create_document_in(
 
     if req.embed {
         let model = state.embedding_model().to_string();
-        if let Err(e) = embed_document(&state.pool, &state.llm, &id, &req.content, &model).await {
+        if let Err(e) = embed_document(
+            &state.pool, &state.llm, &id, &req.content, &model,
+            database, collection,
+            state.config.chunking.chunk_size, state.config.chunking.chunk_overlap,
+        )
+        .await
+        {
             tracing::warn!("embedding failed for {}: {}", id, e);
         }
     }
@@ -143,6 +149,9 @@ pub async fn delete_document(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
+    layerzero_core::embedding::purge_document_vectors(&state.pool, &id)
+        .await
+        .map_err(anyhow::Error::from)?;
     let r = sqlx::query("DELETE FROM documents WHERE id = ?")
         .bind(&id)
         .execute(&state.pool)
@@ -239,7 +248,7 @@ async fn get_stats_in(
             .fetch_one(&state.pool).await.map_err(anyhow::Error::from)?;
 
             let emb: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM embeddings e JOIN documents d ON e.document_id = d.id WHERE d.database_name = ? AND d.collection_name = ?"
+                "SELECT COUNT(*) FROM chunks WHERE database_name = ? AND collection_name = ?"
             )
             .bind(db).bind(col)
             .fetch_one(&state.pool).await.map_err(anyhow::Error::from)?;
@@ -255,7 +264,7 @@ async fn get_stats_in(
         _ => {
             let doc: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM documents")
                 .fetch_one(&state.pool).await.map_err(anyhow::Error::from)?;
-            let emb: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM embeddings")
+            let emb: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM chunks")
                 .fetch_one(&state.pool).await.map_err(anyhow::Error::from)?;
             let node: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM graph_nodes")
                 .fetch_one(&state.pool).await.map_err(anyhow::Error::from)?;

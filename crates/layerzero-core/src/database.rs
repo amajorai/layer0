@@ -104,6 +104,7 @@ pub async fn delete_database(pool: &SqlitePool, name: &str) -> Result<bool> {
     if name == "default" {
         return Err(anyhow::anyhow!("cannot delete the default database"));
     }
+    crate::embedding::purge_collection_vectors(pool, name, None).await?;
     let mut tx = pool.begin().await?;
     sqlx::query("DELETE FROM documents WHERE database_name = ?").bind(name).execute(&mut *tx).await?;
     sqlx::query("DELETE FROM graph_nodes WHERE database_name = ?").bind(name).execute(&mut *tx).await?;
@@ -187,6 +188,7 @@ pub async fn delete_collection(pool: &SqlitePool, database_name: &str, name: &st
     if database_name == "default" && name == "default" {
         return Err(anyhow::anyhow!("cannot delete the default collection"));
     }
+    crate::embedding::purge_collection_vectors(pool, database_name, Some(name)).await?;
     let mut tx = pool.begin().await?;
     sqlx::query(
         "DELETE FROM documents WHERE database_name = ? AND collection_name = ?"

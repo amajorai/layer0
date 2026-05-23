@@ -22,7 +22,7 @@ pub struct ToolContext {
 impl ToolContext {
     pub async fn new(config: Config) -> Result<Self> {
         let pool = connect(&config).await?;
-        let llm = LlmClient::new(&config.llm)?;
+        let llm = LlmClient::new(&config.llm, &config.effective_chat())?;
         Ok(Self { pool, config, llm })
     }
 }
@@ -62,7 +62,13 @@ pub async fn store_memory(ctx: &ToolContext, args: &Value) -> Result<Value> {
     .execute(&ctx.pool)
     .await?;
 
-    if let Err(e) = embed_document(&ctx.pool, &ctx.llm, &id, content, &ctx.config.llm.embedding_model).await {
+    if let Err(e) = embed_document(
+        &ctx.pool, &ctx.llm, &id, content, &ctx.config.llm.embedding_model,
+        database, collection,
+        ctx.config.chunking.chunk_size, ctx.config.chunking.chunk_overlap,
+    )
+    .await
+    {
         tracing::warn!("embedding failed: {}", e);
     }
 
@@ -117,7 +123,7 @@ pub async fn rag_tool(ctx: &ToolContext, args: &Value) -> Result<Value> {
             collection,
         },
         &ctx.config.llm.embedding_model,
-        &ctx.config.llm.chat_model,
+        &ctx.config.effective_chat().model,
     )
     .await?;
 
@@ -169,6 +175,7 @@ pub async fn get_document_tool(ctx: &ToolContext, args: &Value) -> Result<Value>
 
 pub async fn delete_memory_tool(ctx: &ToolContext, args: &Value) -> Result<Value> {
     let id = args["id"].as_str().ok_or_else(|| anyhow::anyhow!("id required"))?;
+    layerzero_core::embedding::purge_document_vectors(&ctx.pool, id).await?;
     let r = sqlx::query("DELETE FROM documents WHERE id = ?")
         .bind(id)
         .execute(&ctx.pool)
@@ -220,7 +227,7 @@ pub async fn memory_stats_tool(ctx: &ToolContext, args: &Value) -> Result<Value>
             "SELECT COUNT(*) FROM documents WHERE database_name = ? AND collection_name = ?"
         ).bind(database).bind(collection).fetch_one(&ctx.pool).await?;
         let e: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM embeddings e JOIN documents d ON e.document_id = d.id WHERE d.database_name = ? AND d.collection_name = ?"
+            "SELECT COUNT(*) FROM chunks WHERE database_name = ? AND collection_name = ?"
         ).bind(database).bind(collection).fetch_one(&ctx.pool).await?;
         let n: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM graph_nodes WHERE database_name = ? AND collection_name = ?"
@@ -228,20 +235,22 @@ pub async fn memory_stats_tool(ctx: &ToolContext, args: &Value) -> Result<Value>
         (d, e, n)
     } else {
         let d: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM documents").fetch_one(&ctx.pool).await?;
-        let e: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM embeddings").fetch_one(&ctx.pool).await?;
+        let e: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM chunks").fetch_one(&ctx.pool).await?;
         let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM graph_nodes").fetch_one(&ctx.pool).await?;
         (d, e, n)
     };
 
     let edges: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM graph_edges").fetch_one(&ctx.pool).await?;
+    let chat = ctx.config.effective_chat();
 
     Ok(serde_json::json!({
         "database": database,
         "collection": collection,
-        "documents": docs, "embeddings": embs,
+        "documents": docs, "chunks": embs,
         "graph_nodes": nodes, "graph_edges": edges,
         "embedding_model": ctx.config.llm.embedding_model,
-        "chat_model": ctx.config.llm.chat_model,
-        "llm_url": ctx.config.llm.base_url,
+        "chat_model": chat.model,
+        "embeddings_url": ctx.config.llm.base_url,
+        "chat_url": chat.base_url,
     }))
 }

@@ -1,3 +1,4 @@
+mod auth;
 mod routes;
 mod state;
 
@@ -40,16 +41,41 @@ async fn main() -> Result<()> {
     if let Some(p) = args.port { config.server.port = p; }
     if let Some(u) = args.llm_url { config.llm.base_url = u; }
 
+    // Frictionless bootstrap: install llama.cpp, fetch the default model, start
+    // the embeddings sidecar. The guard kills the managed child on shutdown.
+    let _llama_guard = match layerzero_core::installer::ensure_ready(&config).await {
+        Ok(guard) => guard,
+        Err(e) => {
+            tracing::warn!("auto-start failed ({}). Local models may be unavailable.", e);
+            Vec::new()
+        }
+    };
+
+    // Self-update on startup, per [update] config.
+    if config.update.auto_update {
+        match layerzero_core::updater::update_now(&config.update).await {
+            Ok(layerzero_core::updater::UpdateOutcome::Updated { from, to }) => {
+                tracing::warn!("updated layerzero {} -> {} (restart to apply)", from, to)
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!("auto-update failed: {}", e),
+        }
+    } else if config.update.auto_check {
+        if let Ok(Some(v)) = layerzero_core::updater::check_latest(&config.update).await {
+            tracing::warn!("a newer layerzero release is available: {} (run `layerzero update`)", v);
+        }
+    }
+
     let pool = connect(&config).await?;
-    let llm = LlmClient::new(&config.llm)?;
+    let llm = LlmClient::new(&config.llm, &config.effective_chat())?;
 
     if !llm.health().await {
         tracing::warn!(
-            "LLM server not reachable at {}. Start llama-server or set LAYERZERO_LLM_BASE_URL.",
+            "Embeddings backend not reachable at {}. Start llama-server or set LAYERZERO_LLM_BASE_URL.",
             config.llm.base_url
         );
     } else {
-        info!("LLM server healthy at {}", config.llm.base_url);
+        info!("embeddings backend healthy at {}", config.llm.base_url);
     }
 
     let state = AppState::new(pool, config.clone(), llm);
@@ -118,7 +144,8 @@ async fn main() -> Result<()> {
         .route("/v1/models/install-llama", post(models::install_llama))
         .route("/v1/models/:name", delete(models::delete_model))
 
-        .with_state(state)
+        .with_state(state.clone())
+        .layer(axum::middleware::from_fn_with_state(state, auth::require_api_key))
         .layer(cors)
         .layer(TraceLayer::new_for_http());
 

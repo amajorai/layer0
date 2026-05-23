@@ -1,308 +1,202 @@
 # layerzero
 
-A fully self-hostable memory and RAG layer for AI agents. Written entirely in Rust.
+A self-hostable RAG / long-term-memory server for AI agents, written in Rust.
 
-Stores documents with local vector embeddings, builds a knowledge graph, indexes for full-text search, and answers questions via RAG - all without leaving your machine. Plugs into any AI agent through an OpenAI-compatible HTTP API, an MCP server for Claude Code, or directly via CLI.
+It stores documents, splits them into overlapping chunks, embeds each chunk
+locally, and indexes them with **sqlite-vec** (vector ANN) + **FTS5** (BM25
+keyword) for hybrid retrieval — then answers questions with RAG. Everything lives
+in a single SQLite file. Plug it into any agent via an OpenAI-compatible HTTP
+API, an MCP server (Claude Code, Cursor, …), or the CLI.
+
+It is **frictionless**: `layerzero serve` auto-installs llama.cpp, auto-downloads
+the default models, and starts the local sidecar for you. It runs **fully
+offline on any computer** out of the box.
+
+---
 
 ## Features
 
-- Local vector embeddings via llama.cpp (no cloud, no API keys required)
-- Hybrid semantic + keyword search using vector similarity and FTS5 BM25
-- Knowledge graph stored in SQLite with BFS traversal
-- Full RAG pipeline with Reciprocal Rank Fusion and optional reranking
-- OpenAI-compatible API endpoints for drop-in compatibility
-- MCP server for Claude Code, Cursor, Codeium, and other MCP clients
-- One-command llama.cpp installation from GitHub releases
-- HuggingFace model downloads with progress tracking
-- Single SQLite database - no extra services to run
-- Works with any OpenAI-compatible backend (Ollama, vLLM, OpenAI)
+- **Chunked retrieval** — documents are chunked and embedded per chunk; RAG uses
+  the matched chunk for tight context.
+- **sqlite-vec ANN index** — cosine KNN over a `vec0` virtual table, not a brute
+  force scan.
+- **Hybrid search** — vector + FTS5 BM25 fused with Reciprocal Rank Fusion, with
+  optional reranking and knowledge-graph expansion.
+- **Local-first, zero-config** — `serve` installs llama.cpp, downloads the
+  default embedding (nomic) + chat (gemma) models, and starts the sidecar(s).
+- **Flexible chat backend** — resolves ACP (planned) → a remote backend like
+  Claude (when an API key is set) → a local gemma model. No key required.
+- **OpenAI-compatible API**, **MCP server**, and a **CLI**.
+- **Optional API-key auth**, multi-database / multi-collection scoping.
+- **Self-update** from GitHub releases (`layerzero update`), configurable.
+- Single SQLite database — no external services.
+
+---
 
 ## Architecture
 
 ```
 layerzero/
   crates/
-    layerzero-core/    core library: DB, embeddings, graph, RAG, LLM client
-    layerzero-server/  HTTP API server (OpenAI-compatible)
+    layerzero-core/    DB, chunking, embeddings, sqlite-vec, graph, RAG, LLM client, installer, updater
+    layerzero-server/  HTTP API server (OpenAI-compatible) + auth + bootstrap
     layerzero-cli/     CLI (layerzero binary)
     layerzero-mcp/     MCP server for Claude Code and other agents
+  skills/              agentskills.io skills (installable via `npx skills`)
+  .github/workflows/   CI (all platforms) + release (builds + GitHub Release)
 ```
 
-Data is stored in a single SQLite database at `~/.layerzero/layerzero.db`:
+### How chat is resolved
 
-- `documents` - raw content and metadata with FTS5 full-text index
-- `embeddings` - float32 vectors stored as BLOBs, searched with cosine similarity in Rust
-- `graph_nodes` + `graph_edges` - knowledge graph with adjacency list
-- `models` - model registry
+1. **ACP client** — *planned*: an editor/agent drives generation over the Agent
+   Client Protocol (no model needed locally).
+2. **Remote backend** — used only when a key is available (e.g.
+   `ANTHROPIC_API_KEY`). Defaults to Claude via Anthropic's OpenAI-compatible
+   endpoint. Any OpenAI-compatible server works.
+3. **Local gemma fallback** — when no key is set, a local gemma model served by
+   the llama.cpp sidecar handles chat, fully offline.
+
+Embeddings are always local (nomic via the sidecar), unless you point
+`[llm].base_url` at a remote embeddings endpoint — in which case the sidecar is
+skipped automatically.
+
+---
 
 ## Quick start
 
-### 1. Build
+### 1. Build (or grab a release)
 
-```bash
-git clone https://github.com/amajorai/layerzero
-cd layerzero
+```sh
 cargo build --release
+# binaries: target/release/{layerzero, layerzero-server, layerzero-mcp}
 ```
 
-Binaries land in `target/release/`: `layerzero`, `layerzero-server`, `layerzero-mcp`.
+Requires Rust stable + a C toolchain (MSVC on Windows, gcc/clang elsewhere).
+SQLite is bundled. Prebuilt archives are on the GitHub Releases page, named
+`layerzero-<target-triple>.{zip,tar.gz}` and containing all three binaries.
 
-### 2. Install llama.cpp
+### 2. Initialize
 
-```bash
-# Downloads the latest release for your platform from GitHub
-layerzero install llama
-```
-
-Or point to an existing server by setting `LAYERZERO_LLM_BASE_URL` (Ollama, vLLM, OpenAI, etc.).
-
-### 3. Download a model
-
-```bash
-# Small chat model
-layerzero model download bartowski/Llama-3.2-1B-Instruct-GGUF Llama-3.2-1B-Instruct-Q4_K_M.gguf
-
-# Embedding model
-layerzero model download nomic-ai/nomic-embed-text-v1.5-GGUF nomic-embed-text-v1.5.Q4_K_M.gguf
-```
-
-### 4. Start llama-server
-
-```bash
-llama-server \
-  --model ~/.layerzero/models/Llama-3.2-1B-Instruct-Q4_K_M.gguf \
-  --port 8081 \
-  --embedding \
-  --parallel 4
-```
-
-### 5. Start layerzero
-
-```bash
+```sh
 layerzero init
-layerzero-server
-# Server on http://127.0.0.1:8080
 ```
 
-## CLI
+Writes `~/.layerzero/config.toml`, creates data dirs, and generates
+`.claude/mcp.json` + `.cursor/mcp.json` in the current directory.
 
-```bash
-# Store documents
-layerzero store "Paris is the capital of France, located in northern France."
-echo "Long document..." | layerzero store --source "notes/europe.txt"
+### 3. Serve (frictionless)
 
-# Search memory
-layerzero search "capital of France"
-layerzero search "European capitals" --limit 10 --rerank
+```sh
+layerzero serve
+```
 
-# RAG - ask a question grounded in stored memory
-layerzero ask "What do we know about France?"
+On first run this installs llama.cpp, downloads the default embedding model
+(`nomic-embed-text-v1.5`) and — if no chat key is set — the local chat model
+(`gemma-3-4b-it`), starts the sidecar(s), and serves on
+`http://127.0.0.1:8080`. To use Claude instead of local gemma, set
+`ANTHROPIC_API_KEY` before serving.
 
-# Database stats
-layerzero db stats
-layerzero db list
+### 4. Use it
 
-# Check status
+```sh
+layerzero store "layerzero indexes chunks with sqlite-vec."
+layerzero search "vector search"
+layerzero ask "What does layerzero use for vector search?"
 layerzero status
 ```
 
-## HTTP API
-
-All routes are under `http://localhost:8080`.
-
-### Documents
-
-```bash
-# Store
-curl -X POST /v1/documents \
-  -H "Content-Type: application/json" \
-  -d '{"content": "The Eiffel Tower is 330m tall.", "source": "wiki"}'
-
-# Hybrid search (vector + keyword + optional graph expansion + optional rerank)
-curl -X POST /v1/search \
-  -H "Content-Type: application/json" \
-  -d '{"query": "Eiffel Tower height", "limit": 5, "rerank": true, "use_graph": true}'
-
-# RAG
-curl -X POST /v1/rag \
-  -H "Content-Type: application/json" \
-  -d '{"query": "How tall is the Eiffel Tower?", "limit": 3}'
-
-# List / get / delete
-curl /v1/documents
-curl /v1/documents/{id}
-curl -X DELETE /v1/documents/{id}
-```
-
-### Graph
-
-```bash
-# Create node
-curl -X POST /v1/graph/nodes \
-  -d '{"label": "Paris", "properties": {"country": "France"}}'
-
-# Create edge
-curl -X POST /v1/graph/edges \
-  -d '{"source_id": "...", "target_id": "...", "relation": "capital_of"}'
-
-# BFS traversal
-curl -X POST /v1/graph/query \
-  -d '{"start_label": "Paris", "depth": 2, "relation": "capital_of"}'
-
-# Store document with auto-graph creation
-curl -X POST /v1/documents -d '{
-  "content": "Paris is the capital of France.",
-  "nodes": [
-    {
-      "label": "Paris",
-      "edges": [{"target_label": "France", "relation": "capital_of"}]
-    }
-  ]
-}'
-```
-
-### OpenAI-compatible endpoints
-
-These are drop-in compatible with any OpenAI client:
-
-```bash
-# Embeddings
-curl -X POST /v1/embeddings \
-  -d '{"model": "local", "input": "Hello world"}'
-
-# Chat completions (streaming supported)
-curl -X POST /v1/chat/completions \
-  -d '{"model": "local", "messages": [{"role": "user", "content": "Hello"}], "stream": true}'
-
-# List models
-curl /v1/models
-```
-
-### Models
-
-```bash
-# Download from HuggingFace
-curl -X POST /v1/models/download \
-  -d '{"repo": "bartowski/Llama-3.2-1B-Instruct-GGUF", "filename": "Llama-3.2-1B-Instruct-Q4_K_M.gguf", "model_type": "chat"}'
-
-# Install llama.cpp
-curl -X POST /v1/models/install-llama
-
-# Stats
-curl /v1/stats
-```
-
-## MCP integration
-
-Add to `~/.claude/mcp.json` or project `.claude/mcp.json`:
-
-```json
-{
-  "layerzero": {
-    "command": "/path/to/layerzero-mcp"
-  }
-}
-```
-
-With environment overrides:
-
-```json
-{
-  "layerzero": {
-    "command": "layerzero-mcp",
-    "env": {
-      "LAYERZERO_LLM_BASE_URL": "http://127.0.0.1:8081"
-    }
-  }
-}
-```
-
-### MCP tools
-
-| Tool | What it does |
-|------|-------------|
-| `store_memory` | Store a document with automatic embedding |
-| `search_memory` | Semantic + keyword hybrid search |
-| `rag_query` | Answer a question grounded in memory |
-| `get_document` | Fetch a document by ID |
-| `delete_memory` | Remove a document |
-| `graph_query` | Traverse the knowledge graph |
-| `memory_stats` | Database statistics |
-
-## Connecting Cursor, Codex, or any OpenAI client
-
-Point the base URL at `http://localhost:8080` and use any API key (or none). Embeddings route to your local llama.cpp instance. Chat routes through too, giving you a unified local LLM proxy with memory.
+---
 
 ## Configuration
 
-Global config: `~/.layerzero/config.toml`
+Global config: `~/.layerzero/config.toml` (see `config/default.toml` for the
+fully-commented template). Environment overrides use the `LAYERZERO__` prefix
+(double underscore separates nested keys, e.g. `LAYERZERO__SERVER__PORT`).
 
-```toml
-[server]
-host = "127.0.0.1"
-port = 8080
+Key sections: `[server]` (host/port/cors, optional `api_key`), `[llm]` (local
+embeddings backend), `[chat]` (remote chat backend), `[embeddings]` (dimensions
+— must match the model, nomic = 768), `[chunking]` (chunk_size/overlap),
+`[installer]` (model repos/files, ports, `auto_start`), `[update]` (repo,
+auto_check, auto_update).
 
-[llm]
-base_url = "http://127.0.0.1:8081"
-chat_model = "local"
-embedding_model = "local"
-timeout_secs = 120
-# api_key = "sk-..."
+### Auth
 
-[embeddings]
-dimensions = 1536
-batch_size = 16
+Set `[server].api_key` to require `X-API-Key` (or `Authorization: Bearer`) on
+every request except `/health`. Unset = open (local default).
 
-[installer]
-llama_server_port = 8081
-# hf_token = "hf_..."
+---
+
+## HTTP API
+
+Base: `http://localhost:8080`. Highlights:
+
+```
+POST /v1/documents              store (auto-chunked + embedded)
+POST /v1/search                 hybrid search (vector + BM25 [+ graph] [+ rerank])
+POST /v1/rag                    answer grounded in memory
+GET/DELETE /v1/documents[/:id]  list / fetch / delete
+/v1/graph/...                   nodes, edges, BFS query
+POST /v1/embeddings             OpenAI-compatible
+POST /v1/chat/completions       OpenAI-compatible (routes to the chat backend)
+/v1/db/:database/:collection/... scoped variants of the above
+GET  /v1/stats                  counts
+GET  /health                    liveness (no auth)
 ```
 
-Environment variables (prefix `LAYERZERO_`):
+---
 
-```bash
-LAYERZERO_SERVER_PORT=9090
-LAYERZERO_LLM_BASE_URL=http://localhost:11434/v1
-LAYERZERO_LLM_API_KEY=sk-...
-HF_TOKEN=hf_...
+## MCP
+
+```sh
+layerzero mcp        # stdio JSON-RPC 2.0
 ```
 
-## Using a remote LLM
+Tools: `store_memory`, `search_memory`, `rag_query`, `get_document`,
+`delete_memory`, `graph_query`, `memory_stats`. `layerzero init` writes the
+client config; or add it manually to `.claude/mcp.json` / `.cursor/mcp.json`.
 
-layerzero works with any OpenAI-compatible backend:
+---
 
-```toml
-# Ollama
-[llm]
-base_url = "http://localhost:11434/v1"
-chat_model = "llama3.2"
-embedding_model = "nomic-embed-text"
+## Skills
 
-# OpenAI
-[llm]
-base_url = "https://api.openai.com"
-api_key = "sk-..."
-chat_model = "gpt-4o-mini"
-embedding_model = "text-embedding-3-small"
+`skills/` contains [agentskills.io](https://agentskills.io)-compatible skills
+(`layerzero-setup`, `layerzero-memory`) — install them into any skills-aware
+agent (e.g. `npx skills add <repo>`).
+
+---
+
+## Updating
+
+```sh
+layerzero update     # self-update from the latest GitHub release
 ```
 
-## RAG pipeline
+`[update].auto_check` logs when a newer release exists on `serve`;
+`[update].auto_update` applies it on startup (takes effect on next restart).
 
-1. Query embedded with configured embedding model
-2. Cosine similarity over all stored vectors (pure Rust, no index service needed)
-3. FTS5 BM25 keyword search runs in parallel
-4. Results fused with Reciprocal Rank Fusion (k=60)
-5. Optional graph expansion: top document's linked nodes fetched and merged
-6. Optional reranking: re-scores all results by embedding similarity to query
-7. Top-k context passed to LLM with the question
+---
 
-## Building from source
+## Releases & CI
 
-Requires Rust 1.75+. SQLite is bundled - no system dependencies.
+GitHub Actions build and test on Linux/macOS/Windows. Pushing a `v*.*.*` tag
+builds release binaries for five targets (linux x64/arm64, macOS x64/arm64,
+windows x64) and publishes them to a GitHub Release. Release asset names embed
+the Rust target triple, which the self-updater matches.
 
-```bash
-cargo build --release
-```
+---
+
+## Database schema (single SQLite file)
+
+| Table | Contents |
+|-------|----------|
+| `documents` | Source documents + metadata (FTS5 mirror in `documents_fts`) |
+| `chunks` | Per-document chunks (the retrieval unit) |
+| `vec_chunks` | sqlite-vec `vec0` cosine index over chunk embeddings |
+| `graph_nodes` / `graph_edges` | Knowledge graph |
+| `databases` / `collections` | Named scopes |
+| `models` | Model registry |
+
+---
 
 ## License
 

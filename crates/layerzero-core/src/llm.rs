@@ -5,30 +5,42 @@ use serde_json::json;
 use std::time::Duration;
 use tracing::{debug, warn};
 
-use crate::config::LlmConfig;
+use crate::config::{ChatConfig, LlmConfig};
 use crate::types::{ChatCompletionRequest, ChatCompletionResponse, EmbeddingResponse};
 
+/// Talks to two OpenAI-wire-format backends: a local embeddings server
+/// (`base_url`, the llama-server sidecar) and a chat backend (`chat_base_url`,
+/// Claude via Anthropic's OpenAI-compatible endpoint by default).
 #[derive(Clone)]
 pub struct LlmClient {
     client: Client,
     pub base_url: String,
     pub api_key: Option<String>,
+    chat_base_url: String,
+    chat_api_key: Option<String>,
 }
 
 impl LlmClient {
-    pub fn new(config: &LlmConfig) -> Result<Self> {
+    pub fn new(llm: &LlmConfig, chat: &ChatConfig) -> Result<Self> {
+        let timeout = llm.timeout_secs.max(chat.timeout_secs);
         let client = Client::builder()
-            .timeout(Duration::from_secs(config.timeout_secs))
+            .timeout(Duration::from_secs(timeout))
             .build()?;
         Ok(Self {
             client,
-            base_url: config.base_url.trim_end_matches('/').to_string(),
-            api_key: config.api_key.clone(),
+            base_url: llm.base_url.trim_end_matches('/').to_string(),
+            api_key: llm.api_key.clone(),
+            chat_base_url: chat.base_url.trim_end_matches('/').to_string(),
+            chat_api_key: chat.api_key.clone(),
         })
     }
 
     fn auth_header(&self) -> Option<String> {
         self.api_key.as_ref().map(|k| format!("Bearer {}", k))
+    }
+
+    fn chat_auth_header(&self) -> Option<String> {
+        self.chat_api_key.as_ref().map(|k| format!("Bearer {}", k))
     }
 
     pub async fn embed(&self, texts: &[&str], model: &str) -> Result<Vec<Vec<f32>>> {
@@ -65,9 +77,9 @@ impl LlmClient {
 
         let mut req = self
             .client
-            .post(format!("{}/v1/chat/completions", self.base_url))
+            .post(format!("{}/v1/chat/completions", self.chat_base_url))
             .json(request);
-        if let Some(auth) = self.auth_header() {
+        if let Some(auth) = self.chat_auth_header() {
             req = req.header("Authorization", auth);
         }
 
@@ -84,9 +96,9 @@ impl LlmClient {
     pub async fn chat_stream(&self, request: &ChatCompletionRequest) -> Result<reqwest::Response> {
         let mut req = self
             .client
-            .post(format!("{}/v1/chat/completions", self.base_url))
+            .post(format!("{}/v1/chat/completions", self.chat_base_url))
             .json(request);
-        if let Some(auth) = self.auth_header() {
+        if let Some(auth) = self.chat_auth_header() {
             req = req.header("Authorization", auth);
         }
 

@@ -104,6 +104,10 @@ pub struct SearchResult {
     pub document: Document,
     pub score: f32,
     pub rerank_score: Option<f32>,
+    /// The specific chunk that matched, when retrieval is chunk-level. RAG uses
+    /// this (falling back to the full document) to keep context tight.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matched_chunk: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

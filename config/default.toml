@@ -1,22 +1,60 @@
+# layerzero configuration
+# Everything here has sensible defaults; advanced users override as needed.
+
 [server]
 host = "127.0.0.1"
 port = 8080
 cors_origins = ["*"]
+# Uncomment to require an API key on every request (X-API-Key or Bearer):
+# api_key = "change-me"
 
 [database]
 max_connections = 5
 
+# Local embeddings backend (the auto-managed llama-server sidecar).
 [llm]
 base_url = "http://127.0.0.1:8081"
-chat_model = "local"
-embedding_model = "local"
+embedding_model = "nomic-embed-text-v1.5"
 timeout_secs = 120
-context_length = 4096
+context_length = 2048
+
+# Chat/generation backend.
+# Resolution order: ACP client (future) -> this remote backend (used only when an
+# API key is available, e.g. ANTHROPIC_API_KEY) -> local gemma sidecar fallback.
+# With no key set, chat runs fully offline on the local gemma model (see [installer]).
+[chat]
+provider = "anthropic"
+base_url = "https://api.anthropic.com"
+model = "claude-haiku-4-5"
+timeout_secs = 120
 
 [embeddings]
-dimensions = 1536
+# Must match the embedding model's output dimension (nomic-embed-text-v1.5 = 768).
+dimensions = 768
 batch_size = 16
 search_limit = 1000
 
+[chunking]
+chunk_size = 512
+chunk_overlap = 64
+
 [installer]
 llama_server_port = 8081
+# Default embedding model, auto-downloaded on first run.
+embedding_repo = "nomic-ai/nomic-embed-text-v1.5-GGUF"
+embedding_file = "nomic-embed-text-v1.5.Q4_K_M.gguf"
+# Default local chat model (offline fallback when no remote chat key is set).
+# gemma-3-4b runs on most machines; override for smaller/larger hardware.
+chat_repo = "bartowski/google_gemma-3-4b-it-GGUF"
+chat_file = "google_gemma-3-4b-it-Q4_K_M.gguf"
+chat_server_port = 8082
+# Auto-install llama.cpp + download models + start the sidecar(s) on `serve`.
+auto_start = true
+
+[update]
+# GitHub repo (owner/name) to pull releases from for `layerzero update`.
+repo = "amajorai/layerzero"
+# Check for a newer release on server startup and log if one is available.
+auto_check = true
+# Download + apply updates automatically on startup (applies on next restart).
+auto_update = false

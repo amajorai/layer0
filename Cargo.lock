@@ -1371,7 +1371,7 @@ dependencies = [
 
 [[package]]
 name = "layerzero"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1391,7 +1391,7 @@ dependencies = [
 
 [[package]]
 name = "layerzero-core"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1401,9 +1401,12 @@ dependencies = [
  "dirs",
  "flate2",
  "futures",
+ "libsqlite3-sys",
  "reqwest",
+ "self-replace",
  "serde",
  "serde_json",
+ "sqlite-vec",
  "sqlx",
  "tar",
  "thiserror 1.0.69",
@@ -1416,7 +1419,7 @@ dependencies = [
 
 [[package]]
 name = "layerzero-mcp"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -1433,7 +1436,7 @@ dependencies = [
 
 [[package]]
 name = "layerzero-server"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2304,6 +2307,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "self-replace"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "03ec815b5eab420ab893f63393878d89c90fdd94c0bcc44c07abb8ad95552fb7"
+dependencies = [
+ "fastrand",
+ "tempfile",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
 name = "semver"
 version = "1.0.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2496,6 +2510,15 @@ checksum = "7bba3a93db0cc4f7bdece8bb09e77e2e785c20bfebf79eb8340ed80708048790"
 dependencies = [
  "nom",
  "unicode_categories",
+]
+
+[[package]]
+name = "sqlite-vec"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d0ba424237a9a5db2f6071f193319e2b6a32f7f3961debb2fbbfe67067abce3f"
+dependencies = [
+ "cc",
 ]
 
 [[package]]

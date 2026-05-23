@@ -126,7 +126,7 @@ async fn graph_expand(
         Ok(g.documents
             .into_iter()
             .filter(|d| d.id != document_id)
-            .map(|d| SearchResult { document: d, score: 0.5, rerank_score: None })
+            .map(|d| SearchResult { document: d, score: 0.5, rerank_score: None, matched_chunk: None })
             .collect())
     } else {
         Ok(vec![])

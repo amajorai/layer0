@@ -1,12 +1,26 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
+use std::sync::Once;
 use tracing::info;
 
 use crate::config::Config;
 
+static VEC_INIT: Once = Once::new();
+
+/// Register the sqlite-vec extension so every connection sqlx opens exposes the
+/// `vec0` virtual table module. Must run before any connection is created.
+fn register_sqlite_vec() {
+    VEC_INIT.call_once(|| unsafe {
+        libsqlite3_sys::sqlite3_auto_extension(Some(std::mem::transmute(
+            sqlite_vec::sqlite3_vec_init as *const (),
+        )));
+    });
+}
+
 pub async fn connect(config: &Config) -> Result<SqlitePool> {
     config.ensure_dirs()?;
+    register_sqlite_vec();
     let url = config.db_url();
     info!("connecting to database: {}", url);
 
@@ -15,7 +29,7 @@ pub async fn connect(config: &Config) -> Result<SqlitePool> {
         .connect(&url)
         .await?;
 
-    run_migrations(&pool).await?;
+    run_migrations(&pool, config.embeddings.dimensions).await?;
     Ok(pool)
 }
 
@@ -38,7 +52,7 @@ async fn apply_migration(pool: &SqlitePool, name: &str, sql: &str) -> Result<()>
     Ok(())
 }
 
-pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
+pub async fn run_migrations(pool: &SqlitePool, embedding_dims: usize) -> Result<()> {
     sqlx::query("PRAGMA journal_mode=WAL").execute(pool).await?;
     sqlx::query("PRAGMA foreign_keys=ON").execute(pool).await?;
     sqlx::query("PRAGMA synchronous=NORMAL").execute(pool).await?;
@@ -61,25 +75,6 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
             created_at      TEXT NOT NULL,
             updated_at      TEXT NOT NULL
         )"#,
-    )
-    .execute(pool)
-    .await?;
-
-    sqlx::query(
-        r#"CREATE TABLE IF NOT EXISTS embeddings (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-            model       TEXT NOT NULL,
-            data        BLOB NOT NULL,
-            dimensions  INTEGER NOT NULL,
-            created_at  TEXT NOT NULL
-        )"#,
-    )
-    .execute(pool)
-    .await?;
-
-    sqlx::query(
-        "CREATE INDEX IF NOT EXISTS idx_embeddings_doc_model ON embeddings(document_id, model)",
     )
     .execute(pool)
     .await?;
@@ -259,6 +254,41 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
         "idx_graph_nodes_db_col",
         "CREATE INDEX IF NOT EXISTS idx_graph_nodes_db_col ON graph_nodes(database_name, collection_name)",
     )
+    .await?;
+
+    // Chunk-level storage: documents are split into overlapping chunks, each with
+    // its own embedding. `chunks.rowid` is the foreign rowid into `vec_chunks`.
+    sqlx::query(
+        r#"CREATE TABLE IF NOT EXISTS chunks (
+            rowid           INTEGER PRIMARY KEY AUTOINCREMENT,
+            id              TEXT NOT NULL UNIQUE,
+            document_id     TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+            chunk_index     INTEGER NOT NULL,
+            content         TEXT NOT NULL,
+            database_name   TEXT NOT NULL DEFAULT 'default',
+            collection_name TEXT NOT NULL DEFAULT 'default',
+            created_at      TEXT NOT NULL
+        )"#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_chunks_doc ON chunks(document_id)")
+        .execute(pool)
+        .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_chunks_db_col ON chunks(database_name, collection_name)",
+    )
+    .execute(pool)
+    .await?;
+
+    // sqlite-vec ANN index. Dimension is fixed at first init; changing the
+    // embedding model to a different dimension requires recreating this table.
+    sqlx::query(&format!(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0(embedding float[{}] distance_metric=cosine)",
+        embedding_dims
+    ))
+    .execute(pool)
     .await?;
 
     info!("database migrations complete");

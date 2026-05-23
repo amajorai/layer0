@@ -101,6 +101,8 @@ enum Commands {
     Status,
     /// Launch MCP server (stdio)
     Mcp,
+    /// Update layerzero to the latest GitHub release
+    Update,
 }
 
 #[derive(Subcommand)]
@@ -185,6 +187,41 @@ async fn main() -> Result<()> {
                 println!("created config: {}", cfg_path.display());
             }
             println!("data dir: {}", layerzero_core::config::default_data_dir().display());
+
+            // Generate MCP client configs for Claude Code and Cursor in the cwd.
+            let mcp_bin = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.join(if cfg!(windows) { "layerzero-mcp.exe" } else { "layerzero-mcp" })))
+                .filter(|p| p.exists())
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|| "layerzero-mcp".to_string());
+
+            let mcp_config = serde_json::json!({
+                "mcpServers": {
+                    "layerzero": { "command": mcp_bin, "args": [] }
+                }
+            });
+            let pretty = serde_json::to_string_pretty(&mcp_config)?;
+            for dir in [".claude", ".cursor"] {
+                if let Err(e) = std::fs::create_dir_all(dir) {
+                    eprintln!("warning: could not create {}: {}", dir, e);
+                    continue;
+                }
+                let path = std::path::Path::new(dir).join("mcp.json");
+                if path.exists() {
+                    println!("mcp config exists: {}", path.display());
+                } else if let Err(e) = std::fs::write(&path, &pretty) {
+                    eprintln!("warning: could not write {}: {}", path.display(), e);
+                } else {
+                    println!("wrote MCP config: {}", path.display());
+                }
+            }
+            if config.chat_uses_local_fallback() {
+                println!("chat: local gemma fallback (set ANTHROPIC_API_KEY to use Claude)");
+            } else {
+                println!("chat: remote backend at {}", config.chat.base_url);
+            }
+            println!("next: run `layerzero serve` (auto-installs llama.cpp + models on first run)");
         }
 
         Commands::Serve { host, port } => {
@@ -244,9 +281,15 @@ async fn main() -> Result<()> {
             .await?;
 
             if embed {
-                let llm = LlmClient::new(&config.llm)?;
-                match embed_document(&pool, &llm, &id, &content, &config.llm.embedding_model).await {
-                    Ok(_) => {},
+                let llm = LlmClient::new(&config.llm, &config.effective_chat())?;
+                match embed_document(
+                    &pool, &llm, &id, &content, &config.llm.embedding_model,
+                    &database, &collection,
+                    config.chunking.chunk_size, config.chunking.chunk_overlap,
+                )
+                .await
+                {
+                    Ok(n) => eprintln!("embedded {} chunk(s)", n),
                     Err(e) => eprintln!("warning: embedding failed: {}", e),
                 }
             }
@@ -256,7 +299,7 @@ async fn main() -> Result<()> {
 
         Commands::Search { query, limit, rerank: _, json, database, collection } => {
             let pool = connect(&config).await?;
-            let llm = LlmClient::new(&config.llm)?;
+            let llm = LlmClient::new(&config.llm, &config.effective_chat())?;
             let results = search_similar(&pool, &llm, &query, &config.llm.embedding_model, limit, 0.0, &database, &collection).await?;
 
             if json {
@@ -275,7 +318,7 @@ async fn main() -> Result<()> {
 
         Commands::Ask { question, limit, no_sources, use_graph, database, collection } => {
             let pool = connect(&config).await?;
-            let llm = LlmClient::new(&config.llm)?;
+            let llm = LlmClient::new(&config.llm, &config.effective_chat())?;
 
             eprintln!("searching knowledge base...");
             let resp = rag_query(
@@ -293,7 +336,7 @@ async fn main() -> Result<()> {
                     collection,
                 },
                 &config.llm.embedding_model,
-                &config.llm.chat_model,
+                &config.effective_chat().model,
             )
             .await?;
 
@@ -341,7 +384,7 @@ async fn main() -> Result<()> {
             match action {
                 DbAction::Stats => {
                     let docs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM documents").fetch_one(&pool).await?;
-                    let embs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM embeddings").fetch_one(&pool).await?;
+                    let embs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM chunks").fetch_one(&pool).await?;
                     let nodes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM graph_nodes").fetch_one(&pool).await?;
                     let edges: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM graph_edges").fetch_one(&pool).await?;
                     println!("documents:  {}", docs);
@@ -406,7 +449,7 @@ async fn main() -> Result<()> {
         }
 
         Commands::Status => {
-            let llm = LlmClient::new(&config.llm)?;
+            let llm = LlmClient::new(&config.llm, &config.effective_chat())?;
             let ok = llm.health().await;
             println!("LLM:      {} ({})", if ok { "online" } else { "offline" }, config.llm.base_url);
             println!("database: {}", config.database.path.display());
@@ -431,6 +474,19 @@ async fn main() -> Result<()> {
             }
             eprintln!("layerzero-mcp not found. Build with: cargo build --release -p layerzero-mcp");
             std::process::exit(1);
+        }
+
+        Commands::Update => {
+            eprintln!("checking {} for updates...", config.update.repo);
+            match layerzero_core::updater::update_now(&config.update).await? {
+                layerzero_core::updater::UpdateOutcome::UpToDate { version } => {
+                    println!("already up to date (v{})", version);
+                }
+                layerzero_core::updater::UpdateOutcome::Updated { from, to } => {
+                    println!("updated {} -> {}", from, to);
+                    println!("restart any running layerzero processes to apply.");
+                }
+            }
         }
     }
 

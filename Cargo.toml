@@ -26,6 +26,9 @@ tower = { version = "0.4", features = ["util"] }
 futures = "0.3"
 tokio-stream = { version = "0.1", features = ["net"] }
 async-trait = "0.1"
+sqlite-vec = "0.1"
+libsqlite3-sys = { version = "0.27", features = ["bundled"] }
+self-replace = "1"
 config = "0.14"
 dirs = "5"
 indicatif = "0.17"
