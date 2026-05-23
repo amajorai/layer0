@@ -1,0 +1,9 @@
+/target
+/.layerzero
+*.db
+*.db-shm
+*.db-wal
+*.gguf
+.env
+.env.local
+config.local.toml

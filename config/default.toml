@@ -1,0 +1,22 @@
+[server]
+host = "127.0.0.1"
+port = 8080
+cors_origins = ["*"]
+
+[database]
+max_connections = 5
+
+[llm]
+base_url = "http://127.0.0.1:8081"
+chat_model = "local"
+embedding_model = "local"
+timeout_secs = 120
+context_length = 4096
+
+[embeddings]
+dimensions = 1536
+batch_size = 16
+search_limit = 1000
+
+[installer]
+llama_server_port = 8081
