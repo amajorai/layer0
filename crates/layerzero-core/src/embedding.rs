@@ -40,9 +40,11 @@ pub async fn search_similar(
     model: &str,
     limit: usize,
     threshold: f32,
+    database_name: &str,
+    collection_name: &str,
 ) -> Result<Vec<SearchResult>> {
     let query_emb = llm.embed_one(query, model).await?;
-    search_by_embedding(pool, &query_emb, model, limit, threshold).await
+    search_by_embedding(pool, &query_emb, model, limit, threshold, database_name, collection_name).await
 }
 
 pub async fn search_by_embedding(
@@ -51,6 +53,8 @@ pub async fn search_by_embedding(
     model: &str,
     limit: usize,
     threshold: f32,
+    database_name: &str,
+    collection_name: &str,
 ) -> Result<Vec<SearchResult>> {
     #[derive(sqlx::FromRow)]
     struct EmbRow {
@@ -59,9 +63,13 @@ pub async fn search_by_embedding(
     }
 
     let rows: Vec<EmbRow> = sqlx::query_as(
-        "SELECT document_id, data FROM embeddings WHERE model = ?"
+        "SELECT e.document_id, e.data FROM embeddings e
+         JOIN documents d ON e.document_id = d.id
+         WHERE e.model = ? AND d.database_name = ? AND d.collection_name = ?"
     )
     .bind(model)
+    .bind(database_name)
+    .bind(collection_name)
     .fetch_all(pool)
     .await?;
 
@@ -92,6 +100,8 @@ pub async fn fts_search(
     pool: &SqlitePool,
     query: &str,
     limit: usize,
+    database_name: &str,
+    collection_name: &str,
 ) -> Result<Vec<SearchResult>> {
     #[derive(sqlx::FromRow)]
     struct FtsRow {
@@ -99,21 +109,27 @@ pub async fn fts_search(
         content: String,
         metadata: String,
         source: Option<String>,
+        database_name: String,
+        collection_name: String,
         created_at: String,
         updated_at: String,
         score: Option<f64>,
     }
 
     let rows: Vec<FtsRow> = sqlx::query_as(
-        r#"SELECT d.id, d.content, d.metadata, d.source, d.created_at, d.updated_at,
+        r#"SELECT d.id, d.content, d.metadata, d.source, d.database_name, d.collection_name,
+                  d.created_at, d.updated_at,
                   bm25(documents_fts) as score
            FROM documents d
            JOIN documents_fts ON documents_fts.rowid = d.rowid
            WHERE documents_fts MATCH ?
+             AND d.database_name = ? AND d.collection_name = ?
            ORDER BY score
            LIMIT ?"#,
     )
     .bind(query)
+    .bind(database_name)
+    .bind(collection_name)
     .bind(limit as i64)
     .fetch_all(pool)
     .await?;
@@ -126,6 +142,8 @@ pub async fn fts_search(
                 content: row.content,
                 metadata: serde_json::from_str(&row.metadata).unwrap_or_default(),
                 source: row.source,
+                database_name: row.database_name,
+                collection_name: row.collection_name,
                 created_at: crate::db::parse_dt(&row.created_at),
                 updated_at: crate::db::parse_dt(&row.updated_at),
             },
@@ -142,12 +160,14 @@ pub async fn fetch_document(pool: &SqlitePool, id: &str) -> Result<Option<Docume
         content: String,
         metadata: String,
         source: Option<String>,
+        database_name: String,
+        collection_name: String,
         created_at: String,
         updated_at: String,
     }
 
     let row: Option<DocRow> = sqlx::query_as(
-        "SELECT id, content, metadata, source, created_at, updated_at FROM documents WHERE id = ?"
+        "SELECT id, content, metadata, source, database_name, collection_name, created_at, updated_at FROM documents WHERE id = ?"
     )
     .bind(id)
     .fetch_optional(pool)
@@ -158,6 +178,8 @@ pub async fn fetch_document(pool: &SqlitePool, id: &str) -> Result<Option<Docume
         content: r.content,
         metadata: serde_json::from_str(&r.metadata).unwrap_or_default(),
         source: r.source,
+        database_name: r.database_name,
+        collection_name: r.collection_name,
         created_at: crate::db::parse_dt(&r.created_at),
         updated_at: crate::db::parse_dt(&r.updated_at),
     }))

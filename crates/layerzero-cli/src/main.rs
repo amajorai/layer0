@@ -2,6 +2,10 @@ use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 use layerzero_core::{
     config::Config,
+    database::{
+        create_collection, create_database, delete_collection, delete_database,
+        list_collections, list_databases,
+    },
     db::connect,
     embedding::{embed_document, search_similar},
     installer::{download_hf_model, install_llama_cpp, list_installed_models},
@@ -45,6 +49,10 @@ enum Commands {
         metadata: Option<String>,
         #[arg(long, default_value = "true")]
         embed: bool,
+        #[arg(long, default_value = "default")]
+        database: String,
+        #[arg(long, default_value = "default")]
+        collection: String,
     },
     /// Search memory
     Search {
@@ -55,6 +63,10 @@ enum Commands {
         rerank: bool,
         #[arg(long)]
         json: bool,
+        #[arg(long, default_value = "default")]
+        database: String,
+        #[arg(long, default_value = "default")]
+        collection: String,
     },
     /// Ask a question using RAG
     Ask {
@@ -65,6 +77,10 @@ enum Commands {
         no_sources: bool,
         #[arg(long)]
         use_graph: bool,
+        #[arg(long, default_value = "default")]
+        database: String,
+        #[arg(long, default_value = "default")]
+        collection: String,
     },
     /// Install llama.cpp
     Install {
@@ -107,10 +123,44 @@ enum ModelAction {
 
 #[derive(Subcommand)]
 enum DbAction {
+    /// Show document/embedding/node/edge counts
     Stats,
+    /// List recent documents
     List {
         #[arg(short, long, default_value = "20")]
         limit: i64,
+        #[arg(long, default_value = "default")]
+        database: String,
+        #[arg(long, default_value = "default")]
+        collection: String,
+    },
+    /// List all databases
+    Databases,
+    /// List collections in a database
+    Collections {
+        database: String,
+    },
+    /// Create a new database
+    CreateDatabase {
+        name: String,
+        #[arg(long)]
+        description: Option<String>,
+    },
+    /// Create a new collection in a database
+    CreateCollection {
+        database: String,
+        name: String,
+        #[arg(long)]
+        description: Option<String>,
+    },
+    /// Delete a database and all its data
+    DeleteDatabase {
+        name: String,
+    },
+    /// Delete a collection and all its data
+    DeleteCollection {
+        database: String,
+        name: String,
     },
 }
 
@@ -153,7 +203,7 @@ async fn main() -> Result<()> {
             std::process::exit(1);
         }
 
-        Commands::Store { content, source, metadata, embed } => {
+        Commands::Store { content, source, metadata, embed, database, collection } => {
             let content = match content {
                 Some(c) => c,
                 None => {
@@ -177,13 +227,17 @@ async fn main() -> Result<()> {
             let now = layerzero_core::db::now_str();
             let meta_str = serde_json::to_string(&meta).unwrap_or_else(|_| "{}".into());
 
+            layerzero_core::database::ensure_collection(&pool, &database, &collection).await?;
+
             sqlx::query(
-                "INSERT INTO documents (id, content, metadata, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+                "INSERT INTO documents (id, content, metadata, source, database_name, collection_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
             )
             .bind(&id)
             .bind(&content)
             .bind(&meta_str)
             .bind(&source)
+            .bind(&database)
+            .bind(&collection)
             .bind(&now)
             .bind(&now)
             .execute(&pool)
@@ -200,10 +254,10 @@ async fn main() -> Result<()> {
             println!("{}", id);
         }
 
-        Commands::Search { query, limit, rerank: _, json } => {
+        Commands::Search { query, limit, rerank: _, json, database, collection } => {
             let pool = connect(&config).await?;
             let llm = LlmClient::new(&config.llm)?;
-            let results = search_similar(&pool, &llm, &query, &config.llm.embedding_model, limit, 0.0).await?;
+            let results = search_similar(&pool, &llm, &query, &config.llm.embedding_model, limit, 0.0, &database, &collection).await?;
 
             if json {
                 println!("{}", serde_json::to_string_pretty(&results)?);
@@ -219,7 +273,7 @@ async fn main() -> Result<()> {
             }
         }
 
-        Commands::Ask { question, limit, no_sources, use_graph } => {
+        Commands::Ask { question, limit, no_sources, use_graph, database, collection } => {
             let pool = connect(&config).await?;
             let llm = LlmClient::new(&config.llm)?;
 
@@ -235,6 +289,8 @@ async fn main() -> Result<()> {
                     use_graph,
                     rerank: true,
                     stream: false,
+                    database,
+                    collection,
                 },
                 &config.llm.embedding_model,
                 &config.llm.chat_model,
@@ -294,18 +350,14 @@ async fn main() -> Result<()> {
                     println!("edges:      {}", edges);
                     println!("db:         {}", config.database.path.display());
                 }
-                DbAction::List { limit } => {
+                DbAction::List { limit, database, collection } => {
                     #[derive(sqlx::FromRow)]
-                    struct Row {
-                        id: String,
-                        content: String,
-                        source: Option<String>,
-                    }
+                    struct Row { id: String, content: String, source: Option<String> }
 
                     let rows: Vec<Row> = sqlx::query_as(
-                        "SELECT id, content, source FROM documents ORDER BY created_at DESC LIMIT ?"
+                        "SELECT id, content, source FROM documents WHERE database_name = ? AND collection_name = ? ORDER BY created_at DESC LIMIT ?"
                     )
-                    .bind(limit)
+                    .bind(&database).bind(&collection).bind(limit)
                     .fetch_all(&pool)
                     .await?;
 
@@ -313,6 +365,42 @@ async fn main() -> Result<()> {
                         let preview = r.content.chars().take(80).collect::<String>();
                         println!("{} | {} | {}", r.id, r.source.as_deref().unwrap_or("-"), preview);
                     }
+                }
+                DbAction::Databases => {
+                    let dbs = list_databases(&pool).await?;
+                    if dbs.is_empty() {
+                        println!("no databases");
+                    } else {
+                        for db in &dbs {
+                            println!("{}", db.name);
+                        }
+                    }
+                }
+                DbAction::Collections { database } => {
+                    let cols = list_collections(&pool, &database).await?;
+                    if cols.is_empty() {
+                        println!("no collections in database '{}'", database);
+                    } else {
+                        for col in &cols {
+                            println!("{}/{}", col.database_name, col.name);
+                        }
+                    }
+                }
+                DbAction::CreateDatabase { name, description } => {
+                    create_database(&pool, &name, description.as_deref()).await?;
+                    println!("created database '{}'", name);
+                }
+                DbAction::CreateCollection { database, name, description } => {
+                    create_collection(&pool, &database, &name, description.as_deref()).await?;
+                    println!("created collection '{}/{}'", database, name);
+                }
+                DbAction::DeleteDatabase { name } => {
+                    delete_database(&pool, &name).await?;
+                    println!("deleted database '{}'", name);
+                }
+                DbAction::DeleteCollection { database, name } => {
+                    delete_collection(&pool, &database, &name).await?;
+                    println!("deleted collection '{}/{}'", database, name);
                 }
             }
         }

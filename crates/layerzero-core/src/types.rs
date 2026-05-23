@@ -8,6 +8,8 @@ pub struct Document {
     pub content: String,
     pub metadata: serde_json::Value,
     pub source: Option<String>,
+    pub database_name: String,
+    pub collection_name: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -20,6 +22,8 @@ impl Document {
             content: content.into(),
             metadata: serde_json::Value::Object(Default::default()),
             source: None,
+            database_name: "default".to_string(),
+            collection_name: "default".to_string(),
             created_at: now,
             updated_at: now,
         }
@@ -32,6 +36,8 @@ pub struct GraphNode {
     pub label: String,
     pub properties: serde_json::Value,
     pub document_id: Option<String>,
+    pub database_name: String,
+    pub collection_name: String,
     pub created_at: DateTime<Utc>,
 }
 
@@ -42,6 +48,8 @@ impl GraphNode {
             label: label.into(),
             properties: serde_json::Value::Object(Default::default()),
             document_id: None,
+            database_name: "default".to_string(),
+            collection_name: "default".to_string(),
             created_at: Utc::now(),
         }
     }
@@ -74,6 +82,21 @@ impl GraphEdge {
             created_at: Utc::now(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Database {
+    pub name: String,
+    pub description: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Collection {
+    pub database_name: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -194,7 +217,7 @@ pub struct EmbeddingUsage {
     pub total_tokens: u32,
 }
 
-// Layer-zero-specific API types
+// API request/response types
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateDocumentRequest {
@@ -205,6 +228,10 @@ pub struct CreateDocumentRequest {
     #[serde(default = "default_true")]
     pub embed: bool,
     pub nodes: Option<Vec<CreateNodeRequest>>,
+    #[serde(default = "default_db")]
+    pub database: String,
+    #[serde(default = "default_collection")]
+    pub collection: String,
 }
 
 fn default_obj() -> serde_json::Value {
@@ -212,6 +239,12 @@ fn default_obj() -> serde_json::Value {
 }
 fn default_true() -> bool {
     true
+}
+pub fn default_db() -> String {
+    "default".to_string()
+}
+pub fn default_collection() -> String {
+    "default".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -248,6 +281,10 @@ pub struct SearchRequest {
     #[serde(default)]
     pub rerank: bool,
     pub model: Option<String>,
+    #[serde(default = "default_db")]
+    pub database: String,
+    #[serde(default = "default_collection")]
+    pub collection: String,
 }
 
 fn default_limit() -> usize {
@@ -268,6 +305,10 @@ pub struct RagRequest {
     pub rerank: bool,
     #[serde(default)]
     pub stream: bool,
+    #[serde(default = "default_db")]
+    pub database: String,
+    #[serde(default = "default_collection")]
+    pub collection: String,
 }
 
 fn default_rag_limit() -> usize {
@@ -289,10 +330,26 @@ pub struct GraphQueryRequest {
     pub depth: usize,
     pub relation: Option<String>,
     pub direction: Option<String>,
+    #[serde(default = "default_db")]
+    pub database: String,
+    #[serde(default = "default_collection")]
+    pub collection: String,
 }
 
 fn default_depth() -> usize {
     2
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateDatabaseRequest {
+    pub name: String,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateCollectionRequest {
+    pub name: String,
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

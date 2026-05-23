@@ -19,19 +19,47 @@ pub async fn connect(config: &Config) -> Result<SqlitePool> {
     Ok(pool)
 }
 
+async fn apply_migration(pool: &SqlitePool, name: &str, sql: &str) -> Result<()> {
+    let exists: bool = sqlx::query_scalar(
+        "SELECT COUNT(*) > 0 FROM _migrations WHERE name = ?"
+    )
+    .bind(name)
+    .fetch_one(pool)
+    .await?;
+
+    if !exists {
+        sqlx::query(sql).execute(pool).await?;
+        sqlx::query("INSERT INTO _migrations (name, applied_at) VALUES (?, ?)")
+            .bind(name)
+            .bind(now_str())
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
 pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
     sqlx::query("PRAGMA journal_mode=WAL").execute(pool).await?;
     sqlx::query("PRAGMA foreign_keys=ON").execute(pool).await?;
     sqlx::query("PRAGMA synchronous=NORMAL").execute(pool).await?;
 
     sqlx::query(
+        r#"CREATE TABLE IF NOT EXISTS _migrations (
+            name       TEXT PRIMARY KEY,
+            applied_at TEXT NOT NULL
+        )"#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
         r#"CREATE TABLE IF NOT EXISTS documents (
-            id          TEXT PRIMARY KEY,
-            content     TEXT NOT NULL,
-            metadata    TEXT NOT NULL DEFAULT '{}',
-            source      TEXT,
-            created_at  TEXT NOT NULL,
-            updated_at  TEXT NOT NULL
+            id              TEXT PRIMARY KEY,
+            content         TEXT NOT NULL,
+            metadata        TEXT NOT NULL DEFAULT '{}',
+            source          TEXT,
+            created_at      TEXT NOT NULL,
+            updated_at      TEXT NOT NULL
         )"#,
     )
     .execute(pool)
@@ -149,6 +177,88 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
         )"#,
     )
     .execute(pool)
+    .await?;
+
+    // Named databases and collections registry
+    sqlx::query(
+        r#"CREATE TABLE IF NOT EXISTS databases (
+            name        TEXT PRIMARY KEY,
+            description TEXT,
+            created_at  TEXT NOT NULL
+        )"#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"CREATE TABLE IF NOT EXISTS collections (
+            database_name TEXT NOT NULL,
+            name          TEXT NOT NULL,
+            description   TEXT,
+            created_at    TEXT NOT NULL,
+            PRIMARY KEY (database_name, name)
+        )"#,
+    )
+    .execute(pool)
+    .await?;
+
+    // Ensure the default database and collection exist
+    let now = now_str();
+    sqlx::query(
+        "INSERT OR IGNORE INTO databases (name, created_at) VALUES ('default', ?)"
+    )
+    .bind(&now)
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "INSERT OR IGNORE INTO collections (database_name, name, created_at) VALUES ('default', 'default', ?)"
+    )
+    .bind(&now)
+    .execute(pool)
+    .await?;
+
+    // Additive column migrations using the _migrations table
+    apply_migration(
+        pool,
+        "add_database_name_to_documents",
+        "ALTER TABLE documents ADD COLUMN database_name TEXT NOT NULL DEFAULT 'default'",
+    )
+    .await?;
+
+    apply_migration(
+        pool,
+        "add_collection_name_to_documents",
+        "ALTER TABLE documents ADD COLUMN collection_name TEXT NOT NULL DEFAULT 'default'",
+    )
+    .await?;
+
+    apply_migration(
+        pool,
+        "add_database_name_to_graph_nodes",
+        "ALTER TABLE graph_nodes ADD COLUMN database_name TEXT NOT NULL DEFAULT 'default'",
+    )
+    .await?;
+
+    apply_migration(
+        pool,
+        "add_collection_name_to_graph_nodes",
+        "ALTER TABLE graph_nodes ADD COLUMN collection_name TEXT NOT NULL DEFAULT 'default'",
+    )
+    .await?;
+
+    apply_migration(
+        pool,
+        "idx_documents_db_col",
+        "CREATE INDEX IF NOT EXISTS idx_documents_db_col ON documents(database_name, collection_name)",
+    )
+    .await?;
+
+    apply_migration(
+        pool,
+        "idx_graph_nodes_db_col",
+        "CREATE INDEX IF NOT EXISTS idx_graph_nodes_db_col ON graph_nodes(database_name, collection_name)",
+    )
     .await?;
 
     info!("database migrations complete");

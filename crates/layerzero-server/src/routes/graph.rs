@@ -19,6 +19,26 @@ pub async fn create_node_route(
         label: req.label,
         properties: req.properties,
         document_id: req.document_id,
+        database_name: "default".to_string(),
+        collection_name: "default".to_string(),
+        created_at: Utc::now(),
+    };
+    create_node(&state.pool, &node).await.map_err(anyhow::Error::from)?;
+    Ok(Json(node))
+}
+
+pub async fn create_node_scoped(
+    State(state): State<AppState>,
+    Path((database, collection)): Path<(String, String)>,
+    Json(req): Json<GraphNode>,
+) -> ApiResult<Json<GraphNode>> {
+    let node = GraphNode {
+        id: if req.id.is_empty() { Uuid::new_v4().to_string() } else { req.id },
+        label: req.label,
+        properties: req.properties,
+        document_id: req.document_id,
+        database_name: database,
+        collection_name: collection,
         created_at: Utc::now(),
     };
     create_node(&state.pool, &node).await.map_err(anyhow::Error::from)?;
@@ -78,10 +98,27 @@ pub async fn query_graph(
     State(state): State<AppState>,
     Json(req): Json<GraphQueryRequest>,
 ) -> ApiResult<Json<GraphSearchResult>> {
+    run_graph_query(state, req).await
+}
+
+pub async fn query_graph_scoped(
+    State(state): State<AppState>,
+    Path((database, collection)): Path<(String, String)>,
+    Json(mut req): Json<GraphQueryRequest>,
+) -> ApiResult<Json<GraphSearchResult>> {
+    req.database = database;
+    req.collection = collection;
+    run_graph_query(state, req).await
+}
+
+async fn run_graph_query(state: AppState, req: GraphQueryRequest) -> ApiResult<Json<GraphSearchResult>> {
+    let db = &req.database;
+    let col = &req.collection;
+
     let start_id = if let Some(id) = &req.start_node_id {
         id.clone()
     } else if let Some(label) = &req.start_label {
-        find_nodes_by_label(&state.pool, label)
+        find_nodes_by_label(&state.pool, label, db, col)
             .await
             .map_err(anyhow::Error::from)?
             .into_iter()
@@ -93,7 +130,7 @@ pub async fn query_graph(
     };
 
     let dir = req.direction.as_deref().unwrap_or("both");
-    let result = bfs_traverse(&state.pool, &start_id, req.depth, req.relation.as_deref(), dir)
+    let result = bfs_traverse(&state.pool, &start_id, req.depth, req.relation.as_deref(), dir, db, col)
         .await
         .map_err(anyhow::Error::from)?;
 
@@ -110,14 +147,32 @@ pub async fn list_nodes_route(
     State(state): State<AppState>,
     Query(q): Query<ListQuery>,
 ) -> ApiResult<Json<Vec<GraphNode>>> {
-    Ok(Json(list_nodes(&state.pool, q.limit.unwrap_or(50), q.offset.unwrap_or(0))
-        .await.map_err(anyhow::Error::from)?))
+    Ok(Json(
+        list_nodes(&state.pool, q.limit.unwrap_or(50), q.offset.unwrap_or(0), "default", "default")
+            .await
+            .map_err(anyhow::Error::from)?,
+    ))
+}
+
+pub async fn list_nodes_scoped(
+    State(state): State<AppState>,
+    Path((database, collection)): Path<(String, String)>,
+    Query(q): Query<ListQuery>,
+) -> ApiResult<Json<Vec<GraphNode>>> {
+    Ok(Json(
+        list_nodes(&state.pool, q.limit.unwrap_or(50), q.offset.unwrap_or(0), &database, &collection)
+            .await
+            .map_err(anyhow::Error::from)?,
+    ))
 }
 
 pub async fn list_edges_route(
     State(state): State<AppState>,
     Query(q): Query<ListQuery>,
 ) -> ApiResult<Json<Vec<GraphEdge>>> {
-    Ok(Json(list_edges(&state.pool, q.limit.unwrap_or(50), q.offset.unwrap_or(0))
-        .await.map_err(anyhow::Error::from)?))
+    Ok(Json(
+        list_edges(&state.pool, q.limit.unwrap_or(50), q.offset.unwrap_or(0))
+            .await
+            .map_err(anyhow::Error::from)?,
+    ))
 }

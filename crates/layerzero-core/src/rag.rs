@@ -17,12 +17,15 @@ pub async fn rag_query(
 ) -> Result<RagResponse> {
     debug!("RAG: {}", request.query);
 
+    let db = &request.database;
+    let col = &request.collection;
+
     let vector_results = search_similar(
-        pool, llm, &request.query, embedding_model, request.limit * 3, 0.0,
+        pool, llm, &request.query, embedding_model, request.limit * 3, 0.0, db, col,
     )
     .await?;
 
-    let fts_results = fts_search(pool, &request.query, request.limit * 2)
+    let fts_results = fts_search(pool, &request.query, request.limit * 2, db, col)
         .await
         .unwrap_or_default();
 
@@ -34,8 +37,7 @@ pub async fn rag_query(
 
     if request.use_graph && !sources.is_empty() {
         let top_id = sources[0].document.id.clone();
-        if let Ok(extras) = expand_with_graph(pool, &top_id, 1).await {
-            // Collect existing IDs as owned strings to avoid borrow conflict
+        if let Ok(extras) = expand_with_graph(pool, &top_id, 1, db, col).await {
             let existing_ids: std::collections::HashSet<String> =
                 sources.iter().map(|r| r.document.id.clone()).collect();
             for r in extras {
@@ -101,16 +103,20 @@ async fn expand_with_graph(
     pool: &SqlitePool,
     document_id: &str,
     depth: usize,
+    database_name: &str,
+    collection_name: &str,
 ) -> Result<Vec<SearchResult>> {
     let row: Option<(String,)> = sqlx::query_as(
-        "SELECT id FROM graph_nodes WHERE document_id = ? LIMIT 1",
+        "SELECT id FROM graph_nodes WHERE document_id = ? AND database_name = ? AND collection_name = ? LIMIT 1",
     )
     .bind(document_id)
+    .bind(database_name)
+    .bind(collection_name)
     .fetch_optional(pool)
     .await?;
 
     if let Some((node_id,)) = row {
-        let g = bfs_traverse(pool, &node_id, depth, None, "both").await?;
+        let g = bfs_traverse(pool, &node_id, depth, None, "both", database_name, collection_name).await?;
         Ok(g.documents
             .into_iter()
             .filter(|d| d.id != document_id)

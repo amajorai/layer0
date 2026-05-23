@@ -1,4 +1,5 @@
 pub mod config;
+pub mod database;
 pub mod db;
 pub mod embedding;
 pub mod graph;

@@ -1,4 +1,5 @@
 pub mod chat;
+pub mod databases;
 pub mod documents;
 pub mod embeddings;
 pub mod graph;

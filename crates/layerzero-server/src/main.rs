@@ -11,7 +11,7 @@ use tower_http::trace::TraceLayer;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-use routes::{chat, documents, embeddings, graph, models, search};
+use routes::{chat, databases, documents, embeddings, graph, models, search};
 use state::AppState;
 
 #[derive(Parser)]
@@ -61,23 +61,63 @@ async fn main() -> Result<()> {
         .allow_origin(Any);
 
     let app = Router::new()
+        // Health
         .route("/health", get(|| async { axum::Json(serde_json::json!({ "status": "ok", "service": "layerzero" })) }))
+
+        // Global stats (all databases)
         .route("/v1/stats", get(documents::get_stats))
+
+        // Global document routes (default database/collection)
         .route("/v1/documents", post(documents::create_document).get(documents::list_documents))
         .route("/v1/documents/:id", get(documents::get_document).delete(documents::delete_document))
+
+        // Global search/rag (default database/collection)
         .route("/v1/search", post(search::search))
         .route("/v1/rag", post(search::rag))
+
+        // Global graph routes (default database/collection)
         .route("/v1/graph/nodes", post(graph::create_node_route).get(graph::list_nodes_route))
         .route("/v1/graph/nodes/:id", get(graph::get_node_route).delete(graph::delete_node_route))
         .route("/v1/graph/edges", post(graph::create_edge_route).get(graph::list_edges_route))
         .route("/v1/graph/edges/:id", delete(graph::delete_edge_route))
         .route("/v1/graph/query", post(graph::query_graph))
+
+        // Database management
+        .route("/v1/db", get(databases::list_databases_route).post(databases::create_database_route))
+        .route("/v1/db/:database", get(databases::get_database_route).delete(databases::delete_database_route))
+
+        // Collection management
+        .route("/v1/db/:database/collections", get(databases::list_collections_route).post(databases::create_collection_route))
+        .route("/v1/db/:database/:collection", get(databases::get_collection_route).delete(databases::delete_collection_route))
+
+        // Scoped document routes
+        .route("/v1/db/:database/:collection/documents", post(documents::create_document_scoped).get(documents::list_documents_scoped))
+        .route("/v1/db/:database/:collection/documents/:id", get(documents::get_document).delete(documents::delete_document))
+
+        // Scoped search & RAG
+        .route("/v1/db/:database/:collection/search", post(search::search_scoped))
+        .route("/v1/db/:database/:collection/rag", post(search::rag_scoped))
+
+        // Scoped graph routes
+        .route("/v1/db/:database/:collection/graph/nodes", post(graph::create_node_scoped).get(graph::list_nodes_scoped))
+        .route("/v1/db/:database/:collection/graph/nodes/:id", get(graph::get_node_route).delete(graph::delete_node_route))
+        .route("/v1/db/:database/:collection/graph/edges", post(graph::create_edge_route).get(graph::list_edges_route))
+        .route("/v1/db/:database/:collection/graph/edges/:id", delete(graph::delete_edge_route))
+        .route("/v1/db/:database/:collection/graph/query", post(graph::query_graph_scoped))
+
+        // Scoped stats
+        .route("/v1/db/:database/:collection/stats", get(documents::get_stats_scoped))
+
+        // OpenAI-compatible endpoints (global)
         .route("/v1/embeddings", post(embeddings::create_embeddings))
         .route("/v1/chat/completions", post(chat::chat_completions))
+
+        // Model management
         .route("/v1/models", get(models::list_models))
         .route("/v1/models/download", post(models::download_model))
         .route("/v1/models/install-llama", post(models::install_llama))
         .route("/v1/models/:name", delete(models::delete_model))
+
         .with_state(state)
         .layer(cors)
         .layer(TraceLayer::new_for_http());

@@ -1,6 +1,7 @@
 use axum::{extract::{Path, Query, State}, Json};
 use chrono::Utc;
 use layerzero_core::{
+    database::ensure_collection,
     db::now_str,
     embedding::{embed_document, fetch_document},
     graph::{create_edge, create_node, find_nodes_by_label},
@@ -16,18 +17,43 @@ pub async fn create_document(
     State(state): State<AppState>,
     Json(req): Json<CreateDocumentRequest>,
 ) -> ApiResult<Json<Document>> {
+    create_document_in(state, "default", "default", req).await
+}
+
+pub async fn create_document_scoped(
+    State(state): State<AppState>,
+    Path((database, collection)): Path<(String, String)>,
+    Json(mut req): Json<CreateDocumentRequest>,
+) -> ApiResult<Json<Document>> {
+    req.database = database.clone();
+    req.collection = collection.clone();
+    create_document_in(state, &database, &collection, req).await
+}
+
+async fn create_document_in(
+    state: AppState,
+    database: &str,
+    collection: &str,
+    req: CreateDocumentRequest,
+) -> ApiResult<Json<Document>> {
     if req.content.trim().is_empty() {
         return Err(ApiError::BadRequest("content cannot be empty".into()));
     }
+
+    ensure_collection(&state.pool, database, collection)
+        .await
+        .map_err(anyhow::Error::from)?;
 
     let id = Uuid::new_v4().to_string();
     let now = now_str();
     let metadata = serde_json::to_string(&req.metadata).unwrap_or_else(|_| "{}".into());
 
     sqlx::query(
-        "INSERT INTO documents (id, content, metadata, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+        "INSERT INTO documents (id, content, metadata, source, database_name, collection_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
     )
-    .bind(&id).bind(&req.content).bind(&metadata).bind(&req.source).bind(&now).bind(&now)
+    .bind(&id).bind(&req.content).bind(&metadata).bind(&req.source)
+    .bind(database).bind(collection)
+    .bind(&now).bind(&now)
     .execute(&state.pool)
     .await
     .map_err(anyhow::Error::from)?;
@@ -46,13 +72,15 @@ pub async fn create_document(
                 label: node_req.label.clone(),
                 properties: node_req.properties.clone(),
                 document_id: Some(id.clone()),
+                database_name: database.to_string(),
+                collection_name: collection.to_string(),
                 created_at: Utc::now(),
             };
             create_node(&state.pool, &node).await.map_err(anyhow::Error::from)?;
 
             if let Some(edges) = &node_req.edges {
                 for er in edges {
-                    let targets = find_nodes_by_label(&state.pool, &er.target_label)
+                    let targets = find_nodes_by_label(&state.pool, &er.target_label, database, collection)
                         .await
                         .map_err(anyhow::Error::from)?;
 
@@ -64,6 +92,8 @@ pub async fn create_document(
                             label: er.target_label.clone(),
                             properties: serde_json::Value::Object(Default::default()),
                             document_id: None,
+                            database_name: database.to_string(),
+                            collection_name: collection.to_string(),
                             created_at: Utc::now(),
                         };
                         let tid = t.id.clone();
@@ -92,6 +122,8 @@ pub async fn create_document(
         content: req.content,
         metadata: req.metadata,
         source: req.source,
+        database_name: database.to_string(),
+        collection_name: collection.to_string(),
         created_at: Utc::now(),
         updated_at: Utc::now(),
     }))
@@ -133,16 +165,39 @@ pub async fn list_documents(
     State(state): State<AppState>,
     Query(q): Query<ListQuery>,
 ) -> ApiResult<Json<Vec<Document>>> {
+    list_documents_in(&state, "default", "default", q).await
+}
+
+pub async fn list_documents_scoped(
+    State(state): State<AppState>,
+    Path((database, collection)): Path<(String, String)>,
+    Query(q): Query<ListQuery>,
+) -> ApiResult<Json<Vec<Document>>> {
+    list_documents_in(&state, &database, &collection, q).await
+}
+
+async fn list_documents_in(
+    state: &AppState,
+    database: &str,
+    collection: &str,
+    q: ListQuery,
+) -> ApiResult<Json<Vec<Document>>> {
     let limit = q.limit.unwrap_or(20).min(100);
     let offset = q.offset.unwrap_or(0);
 
     #[derive(sqlx::FromRow)]
-    struct Row { id: String, content: String, metadata: String, source: Option<String>, created_at: String, updated_at: String }
+    struct Row {
+        id: String, content: String, metadata: String, source: Option<String>,
+        database_name: String, collection_name: String,
+        created_at: String, updated_at: String,
+    }
 
     let rows: Vec<Row> = sqlx::query_as(
-        "SELECT id, content, metadata, source, created_at, updated_at FROM documents ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        "SELECT id, content, metadata, source, database_name, collection_name, created_at, updated_at
+         FROM documents WHERE database_name = ? AND collection_name = ?
+         ORDER BY created_at DESC LIMIT ? OFFSET ?"
     )
-    .bind(limit).bind(offset)
+    .bind(database).bind(collection).bind(limit).bind(offset)
     .fetch_all(&state.pool)
     .await
     .map_err(anyhow::Error::from)?;
@@ -152,18 +207,62 @@ pub async fn list_documents(
         content: r.content,
         metadata: serde_json::from_str(&r.metadata).unwrap_or_default(),
         source: r.source,
+        database_name: r.database_name,
+        collection_name: r.collection_name,
         created_at: layerzero_core::db::parse_dt(&r.created_at),
         updated_at: layerzero_core::db::parse_dt(&r.updated_at),
     }).collect()))
 }
 
 pub async fn get_stats(State(state): State<AppState>) -> ApiResult<Json<Stats>> {
-    let doc_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM documents")
-        .fetch_one(&state.pool).await.map_err(anyhow::Error::from)?;
-    let emb_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM embeddings")
-        .fetch_one(&state.pool).await.map_err(anyhow::Error::from)?;
-    let node_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM graph_nodes")
-        .fetch_one(&state.pool).await.map_err(anyhow::Error::from)?;
+    get_stats_in(&state, None, None).await
+}
+
+pub async fn get_stats_scoped(
+    State(state): State<AppState>,
+    Path((database, collection)): Path<(String, String)>,
+) -> ApiResult<Json<Stats>> {
+    get_stats_in(&state, Some(&database), Some(&collection)).await
+}
+
+async fn get_stats_in(
+    state: &AppState,
+    database: Option<&str>,
+    collection: Option<&str>,
+) -> ApiResult<Json<Stats>> {
+    let (doc_count, emb_count, node_count) = match (database, collection) {
+        (Some(db), Some(col)) => {
+            let doc: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM documents WHERE database_name = ? AND collection_name = ?"
+            )
+            .bind(db).bind(col)
+            .fetch_one(&state.pool).await.map_err(anyhow::Error::from)?;
+
+            let emb: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM embeddings e JOIN documents d ON e.document_id = d.id WHERE d.database_name = ? AND d.collection_name = ?"
+            )
+            .bind(db).bind(col)
+            .fetch_one(&state.pool).await.map_err(anyhow::Error::from)?;
+
+            let node: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM graph_nodes WHERE database_name = ? AND collection_name = ?"
+            )
+            .bind(db).bind(col)
+            .fetch_one(&state.pool).await.map_err(anyhow::Error::from)?;
+
+            (doc, emb, node)
+        }
+        _ => {
+            let doc: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM documents")
+                .fetch_one(&state.pool).await.map_err(anyhow::Error::from)?;
+            let emb: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM embeddings")
+                .fetch_one(&state.pool).await.map_err(anyhow::Error::from)?;
+            let node: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM graph_nodes")
+                .fetch_one(&state.pool).await.map_err(anyhow::Error::from)?;
+            (doc, emb, node)
+        }
+    };
+
     let edge_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM graph_edges")
         .fetch_one(&state.pool).await.map_err(anyhow::Error::from)?;
     let model_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM models")
@@ -174,5 +273,12 @@ pub async fn get_stats(State(state): State<AppState>) -> ApiResult<Json<Stats>> 
     .fetch_optional(&state.pool).await.map_err(anyhow::Error::from)?
     .unwrap_or(0);
 
-    Ok(Json(Stats { document_count: doc_count, embedding_count: emb_count, node_count, edge_count, model_count, db_size_bytes: db_size }))
+    Ok(Json(Stats {
+        document_count: doc_count,
+        embedding_count: emb_count,
+        node_count,
+        edge_count,
+        model_count,
+        db_size_bytes: db_size,
+    }))
 }
