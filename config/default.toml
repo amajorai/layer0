@@ -1,4 +1,4 @@
-# layerzero configuration
+# layer0 configuration
 # Everything here has sensible defaults; advanced users override as needed.
 
 [server]
@@ -63,8 +63,8 @@ chat_server_port = 8082
 auto_start = true
 
 [update]
-# GitHub repo (owner/name) to pull releases from for `layerzero update`.
-repo = "amajorai/layerzero"
+# GitHub repo (owner/name) to pull releases from for `layer0 update`.
+repo = "amajorai/layer0"
 # Check for a newer release on server startup and log if one is available.
 auto_check = true
 # Download + apply updates automatically on startup (applies on next restart).

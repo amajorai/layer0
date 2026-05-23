@@ -1,5 +1,5 @@
-Ask a question and get a RAG-grounded answer from layerzero memory.
+Ask a question and get a RAG-grounded answer from layer0 memory.
 
 ```bash
-layerzero ask "$ARGUMENTS"
+layer0 ask "$ARGUMENTS"
 ```

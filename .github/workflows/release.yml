@@ -61,13 +61,13 @@ jobs:
         if: matrix.use_cross == false
         run: >-
           cargo build --release --locked --target ${{ matrix.target }}
-          -p layerzero -p layerzero-server -p layerzero-mcp
+          -p layer0 -p layer0-server -p layer0-mcp
 
       - name: Build release binaries (cross)
         if: matrix.use_cross == true
         run: >-
           cross build --release --locked --target ${{ matrix.target }}
-          -p layerzero -p layerzero-server -p layerzero-mcp
+          -p layer0 -p layer0-server -p layer0-mcp
 
       - name: Package archive (Unix)
         if: runner.os != 'Windows'
@@ -75,10 +75,10 @@ jobs:
         run: |
           set -euo pipefail
           BIN_DIR="target/${{ matrix.target }}/release"
-          ARCHIVE="layerzero-${{ matrix.target }}.tar.gz"
+          ARCHIVE="layer0-${{ matrix.target }}.tar.gz"
           tar -czvf "$ARCHIVE" \
             -C "$BIN_DIR" \
-            layerzero layerzero-server layerzero-mcp
+            layer0 layer0-server layer0-mcp
           echo "ASSET=$ARCHIVE" >> "$GITHUB_ENV"
 
       - name: Package archive (Windows)
@@ -87,11 +87,11 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $binDir = "target/${{ matrix.target }}/release"
-          $archive = "layerzero-${{ matrix.target }}.zip"
+          $archive = "layer0-${{ matrix.target }}.zip"
           $files = @(
-            "$binDir/layerzero.exe",
-            "$binDir/layerzero-server.exe",
-            "$binDir/layerzero-mcp.exe"
+            "$binDir/layer0.exe",
+            "$binDir/layer0-server.exe",
+            "$binDir/layer0-mcp.exe"
           )
           Compress-Archive -Path $files -DestinationPath $archive -Force
           "ASSET=$archive" | Out-File -FilePath $env:GITHUB_ENV -Append
@@ -99,7 +99,7 @@ jobs:
       - name: Upload archive artifact
         uses: actions/upload-artifact@v4
         with:
-          name: layerzero-${{ matrix.target }}
+          name: layer0-${{ matrix.target }}
           path: ${{ env.ASSET }}
           if-no-files-found: error
 
@@ -123,5 +123,5 @@ jobs:
           prerelease: false
           fail_on_unmatched_files: true
           files: |
-            artifacts/**/layerzero-*.tar.gz
-            artifacts/**/layerzero-*.zip
+            artifacts/**/layer0-*.tar.gz
+            artifacts/**/layer0-*.zip

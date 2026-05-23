@@ -1,0 +1,27 @@
+[package]
+name = "layer0"
+version = "0.0.2"
+edition = "2021"
+
+[[bin]]
+name = "layer0"
+path = "src/main.rs"
+
+[dependencies]
+layer0-core = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+reqwest = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+indicatif = { workspace = true }
+dirs = { workspace = true }
+toml = { workspace = true }
+ratatui = { workspace = true }
+crossterm = { workspace = true }

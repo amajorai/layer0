@@ -1,5 +1,5 @@
-Search layerzero memory for relevant documents.
+Search layer0 memory for relevant documents.
 
 ```bash
-layerzero search "$ARGUMENTS"
+layer0 search "$ARGUMENTS"
 ```

@@ -1,0 +1,21 @@
+[package]
+name = "layer0-mcp"
+version = "0.0.2"
+edition = "2021"
+
+[[bin]]
+name = "layer0-mcp"
+path = "src/main.rs"
+
+[dependencies]
+layer0-core = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+uuid = { workspace = true }
+clap = { workspace = true }
+futures = { workspace = true }

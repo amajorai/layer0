@@ -1,5 +1,5 @@
-Store content in layerzero memory with automatic embedding.
+Store content in layer0 memory with automatic embedding.
 
 ```bash
-echo "$ARGUMENTS" | layerzero store
+echo "$ARGUMENTS" | layer0 store
 ```

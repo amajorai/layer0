@@ -1,4 +1,4 @@
-# layerzero
+# 🌐 layer0
 
 A self-hostable RAG / long-term-memory server for AI agents, written in Rust.
 
@@ -8,7 +8,7 @@ keyword) for hybrid retrieval — then answers questions with RAG. Everything li
 in a single SQLite file. Plug it into any agent via an OpenAI-compatible HTTP
 API, an MCP server (Claude Code, Cursor, …), or the CLI.
 
-It is **frictionless**: `layerzero serve` auto-installs llama.cpp, auto-downloads
+It is **frictionless**: `layer0 serve` auto-installs llama.cpp, auto-downloads
 the default models, and starts the local sidecar for you. It runs **fully
 offline on any computer** out of the box.
 
@@ -30,10 +30,10 @@ offline on any computer** out of the box.
   default embedding (nomic) + chat (gemma-4-E4B) models, and starts the sidecar(s).
 - **Flexible chat backend** — resolves ACP (planned) → a remote backend like
   Claude (when an API key is set) → a local gemma model. No key required.
-- **OpenAI-compatible API**, **MCP server**, and a **CLI** (incl. a `layerzero
+- **OpenAI-compatible API**, **MCP server**, and a **CLI** (incl. a `layer0
   config` TUI for editing settings).
 - **Optional API-key auth**, multi-database / multi-collection scoping.
-- **Self-update** from GitHub releases (`layerzero update`), configurable.
+- **Self-update** from GitHub releases (`layer0 update`), configurable.
 - Single SQLite database — no external services.
 
 ---
@@ -41,12 +41,12 @@ offline on any computer** out of the box.
 ## Architecture
 
 ```
-layerzero/
+layer0/
   crates/
-    layerzero-core/    DB, chunking, embeddings, sqlite-vec, graph, RAG, LLM client, installer, updater
-    layerzero-server/  HTTP API server (OpenAI-compatible) + auth + bootstrap
-    layerzero-cli/     CLI (layerzero binary)
-    layerzero-mcp/     MCP server for Claude Code and other agents
+    layer0-core/    DB, chunking, embeddings, sqlite-vec, graph, RAG, LLM client, installer, updater
+    layer0-server/  HTTP API server (OpenAI-compatible) + auth + bootstrap
+    layer0-cli/     CLI (layer0 binary)
+    layer0-mcp/     MCP server for Claude Code and other agents
   skills/              agentskills.io skills (installable via `npx skills`)
   .github/workflows/   CI (all platforms) + release (builds + GitHub Release)
 ```
@@ -73,26 +73,26 @@ skipped automatically.
 
 ```sh
 cargo build --release
-# binaries: target/release/{layerzero, layerzero-server, layerzero-mcp}
+# binaries: target/release/{layer0, layer0-server, layer0-mcp}
 ```
 
 Requires Rust stable + a C toolchain (MSVC on Windows, gcc/clang elsewhere).
 SQLite is bundled. Prebuilt archives are on the GitHub Releases page, named
-`layerzero-<target-triple>.{zip,tar.gz}` and containing all three binaries.
+`layer0-<target-triple>.{zip,tar.gz}` and containing all three binaries.
 
 ### 2. Initialize
 
 ```sh
-layerzero init
+layer0 init
 ```
 
-Writes `~/.layerzero/config.toml`, creates data dirs, and generates
+Writes `~/.layer0/config.toml`, creates data dirs, and generates
 `.claude/mcp.json` + `.cursor/mcp.json` in the current directory.
 
 ### 3. Serve (frictionless)
 
 ```sh
-layerzero serve
+layer0 serve
 ```
 
 On first run this installs llama.cpp, downloads the default embedding model
@@ -104,21 +104,21 @@ On first run this installs llama.cpp, downloads the default embedding model
 ### 4. Use it
 
 ```sh
-layerzero store "layerzero indexes chunks with sqlite-vec."
-layerzero search "vector search"
-layerzero ask "What does layerzero use for vector search?"
-layerzero status
+layer0 store "layer0 indexes chunks with sqlite-vec."
+layer0 search "vector search"
+layer0 ask "What does layer0 use for vector search?"
+layer0 status
 ```
 
 ---
 
 ## Configuration
 
-Global config: `~/.layerzero/config.toml` (see `config/default.toml` for the
-fully-commented template). Environment overrides use the `LAYERZERO__` prefix
-(double underscore separates nested keys, e.g. `LAYERZERO__SERVER__PORT`).
+Global config: `~/.layer0/config.toml` (see `config/default.toml` for the
+fully-commented template). Environment overrides use the `LAYER0__` prefix
+(double underscore separates nested keys, e.g. `LAYER0__SERVER__PORT`).
 
-Edit it interactively with `layerzero config` (a ratatui TUI) or by hand.
+Edit it interactively with `layer0 config` (a ratatui TUI) or by hand.
 
 Key sections: `[server]` (host/port/cors, optional `api_key`), `[llm]` (local
 embeddings backend), `[chat]` (remote chat backend), `[embeddings]` (dimensions
@@ -156,11 +156,11 @@ GET  /health                    liveness (no auth)
 ## MCP
 
 ```sh
-layerzero mcp        # stdio JSON-RPC 2.0
+layer0 mcp        # stdio JSON-RPC 2.0
 ```
 
 Tools: `store_memory`, `search_memory`, `rag_query`, `get_document`,
-`delete_memory`, `graph_query`, `memory_stats`. `layerzero init` writes the
+`delete_memory`, `graph_query`, `memory_stats`. `layer0 init` writes the
 client config; or add it manually to `.claude/mcp.json` / `.cursor/mcp.json`.
 
 ---
@@ -168,7 +168,7 @@ client config; or add it manually to `.claude/mcp.json` / `.cursor/mcp.json`.
 ## Skills
 
 `skills/` contains [agentskills.io](https://agentskills.io)-compatible skills
-(`layerzero-setup`, `layerzero-memory`) — install them into any skills-aware
+(`layer0-setup`, `layer0-memory`) — install them into any skills-aware
 agent (e.g. `npx skills add <repo>`).
 
 ---
@@ -176,7 +176,7 @@ agent (e.g. `npx skills add <repo>`).
 ## Updating
 
 ```sh
-layerzero update     # self-update from the latest GitHub release
+layer0 update     # self-update from the latest GitHub release
 ```
 
 `[update].auto_check` logs when a newer release exists on `serve`;
