@@ -101,7 +101,7 @@ async fn main() -> Result<()> {
         // Scoped graph routes
         .route("/v1/db/:database/:collection/graph/nodes", post(graph::create_node_scoped).get(graph::list_nodes_scoped))
         .route("/v1/db/:database/:collection/graph/nodes/:id", get(graph::get_node_route).delete(graph::delete_node_route))
-        .route("/v1/db/:database/:collection/graph/edges", post(graph::create_edge_route).get(graph::list_edges_route))
+        .route("/v1/db/:database/:collection/graph/edges", post(graph::create_edge_route).get(graph::list_edges_scoped))
         .route("/v1/db/:database/:collection/graph/edges/:id", delete(graph::delete_edge_route))
         .route("/v1/db/:database/:collection/graph/query", post(graph::query_graph_scoped))
 

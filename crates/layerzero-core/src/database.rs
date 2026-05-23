@@ -4,7 +4,23 @@ use sqlx::SqlitePool;
 use crate::db::now_str;
 use crate::types::{Collection, Database};
 
+fn validate_name(name: &str) -> Result<()> {
+    if name.is_empty() {
+        return Err(anyhow::anyhow!("name cannot be empty"));
+    }
+    if name.len() > 256 {
+        return Err(anyhow::anyhow!("name cannot exceed 256 characters"));
+    }
+    if !name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.') {
+        return Err(anyhow::anyhow!(
+            "name may only contain letters, digits, underscores, hyphens, and dots"
+        ));
+    }
+    Ok(())
+}
+
 pub async fn ensure_database(pool: &SqlitePool, name: &str) -> Result<()> {
+    validate_name(name)?;
     sqlx::query(
         "INSERT OR IGNORE INTO databases (name, created_at) VALUES (?, ?)"
     )
@@ -16,6 +32,8 @@ pub async fn ensure_database(pool: &SqlitePool, name: &str) -> Result<()> {
 }
 
 pub async fn ensure_collection(pool: &SqlitePool, database_name: &str, name: &str) -> Result<()> {
+    validate_name(database_name)?;
+    validate_name(name)?;
     ensure_database(pool, database_name).await?;
     sqlx::query(
         "INSERT OR IGNORE INTO collections (database_name, name, created_at) VALUES (?, ?, ?)"
@@ -64,6 +82,7 @@ pub async fn get_database(pool: &SqlitePool, name: &str) -> Result<Option<Databa
 }
 
 pub async fn create_database(pool: &SqlitePool, name: &str, description: Option<&str>) -> Result<Database> {
+    validate_name(name)?;
     let now = now_str();
     sqlx::query(
         "INSERT INTO databases (name, description, created_at) VALUES (?, ?, ?)"
@@ -85,13 +104,15 @@ pub async fn delete_database(pool: &SqlitePool, name: &str) -> Result<bool> {
     if name == "default" {
         return Err(anyhow::anyhow!("cannot delete the default database"));
     }
-    sqlx::query("DELETE FROM documents WHERE database_name = ?").bind(name).execute(pool).await?;
-    sqlx::query("DELETE FROM graph_nodes WHERE database_name = ?").bind(name).execute(pool).await?;
-    sqlx::query("DELETE FROM collections WHERE database_name = ?").bind(name).execute(pool).await?;
+    let mut tx = pool.begin().await?;
+    sqlx::query("DELETE FROM documents WHERE database_name = ?").bind(name).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM graph_nodes WHERE database_name = ?").bind(name).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM collections WHERE database_name = ?").bind(name).execute(&mut *tx).await?;
     let r = sqlx::query("DELETE FROM databases WHERE name = ?")
         .bind(name)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
     Ok(r.rows_affected() > 0)
 }
 
@@ -140,6 +161,8 @@ pub async fn create_collection(
     name: &str,
     description: Option<&str>,
 ) -> Result<Collection> {
+    validate_name(database_name)?;
+    validate_name(name)?;
     ensure_database(pool, database_name).await?;
     let now = now_str();
     sqlx::query(
@@ -164,26 +187,28 @@ pub async fn delete_collection(pool: &SqlitePool, database_name: &str, name: &st
     if database_name == "default" && name == "default" {
         return Err(anyhow::anyhow!("cannot delete the default collection"));
     }
+    let mut tx = pool.begin().await?;
     sqlx::query(
         "DELETE FROM documents WHERE database_name = ? AND collection_name = ?"
     )
     .bind(database_name)
     .bind(name)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
     sqlx::query(
         "DELETE FROM graph_nodes WHERE database_name = ? AND collection_name = ?"
     )
     .bind(database_name)
     .bind(name)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
     let r = sqlx::query(
         "DELETE FROM collections WHERE database_name = ? AND name = ?"
     )
     .bind(database_name)
     .bind(name)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(r.rows_affected() > 0)
 }

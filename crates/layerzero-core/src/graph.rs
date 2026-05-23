@@ -270,3 +270,30 @@ pub async fn list_edges(pool: &SqlitePool, limit: i64, offset: i64) -> Result<Ve
 
     Ok(rows.into_iter().map(|r| parse_edge(r.id, r.source_id, r.target_id, r.relation, r.weight, r.properties, r.created_at)).collect())
 }
+
+pub async fn list_edges_in_collection(
+    pool: &SqlitePool,
+    limit: i64,
+    offset: i64,
+    database_name: &str,
+    collection_name: &str,
+) -> Result<Vec<GraphEdge>> {
+    #[derive(sqlx::FromRow)]
+    struct Row { id: String, source_id: String, target_id: String, relation: String, weight: f64, properties: String, created_at: String }
+
+    let rows: Vec<Row> = sqlx::query_as(
+        "SELECT e.id, e.source_id, e.target_id, e.relation, e.weight, e.properties, e.created_at
+         FROM graph_edges e
+         JOIN graph_nodes n ON e.source_id = n.id
+         WHERE n.database_name = ? AND n.collection_name = ?
+         ORDER BY e.created_at DESC LIMIT ? OFFSET ?"
+    )
+    .bind(database_name)
+    .bind(collection_name)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows.into_iter().map(|r| parse_edge(r.id, r.source_id, r.target_id, r.relation, r.weight, r.properties, r.created_at)).collect())
+}

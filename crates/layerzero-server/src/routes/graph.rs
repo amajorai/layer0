@@ -1,7 +1,7 @@
 use axum::{extract::{Path, Query, State}, Json};
 use chrono::Utc;
 use layerzero_core::{
-    graph::{bfs_traverse, create_edge, create_node, delete_edge, delete_node, find_nodes_by_label, get_node, list_edges, list_nodes},
+    graph::{bfs_traverse, create_edge, create_node, delete_edge, delete_node, find_nodes_by_label, get_node, list_edges, list_edges_in_collection, list_nodes},
     types::{GraphEdge, GraphNode, GraphQueryRequest, GraphSearchResult},
 };
 use serde::Deserialize;
@@ -174,5 +174,23 @@ pub async fn list_edges_route(
         list_edges(&state.pool, q.limit.unwrap_or(50), q.offset.unwrap_or(0))
             .await
             .map_err(anyhow::Error::from)?,
+    ))
+}
+
+pub async fn list_edges_scoped(
+    State(state): State<AppState>,
+    Path((database, collection)): Path<(String, String)>,
+    Query(q): Query<ListQuery>,
+) -> ApiResult<Json<Vec<GraphEdge>>> {
+    Ok(Json(
+        list_edges_in_collection(
+            &state.pool,
+            q.limit.unwrap_or(50),
+            q.offset.unwrap_or(0),
+            &database,
+            &collection,
+        )
+        .await
+        .map_err(anyhow::Error::from)?,
     ))
 }
