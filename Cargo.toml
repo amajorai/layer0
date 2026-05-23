@@ -37,4 +37,6 @@ tar = "0.4"
 zip = "2"
 bytes = "1"
 toml = "0.8"
+ratatui = "0.29"
+crossterm = "0.28"
 layerzero-core = { path = "crates/layerzero-core" }

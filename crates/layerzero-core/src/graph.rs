@@ -1,9 +1,153 @@
 use anyhow::Result;
+use serde::Deserialize;
 use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet, VecDeque};
+use uuid::Uuid;
 
 use crate::db::now_str;
-use crate::types::{GraphEdge, GraphNode, GraphSearchResult};
+use crate::llm::LlmClient;
+use crate::types::{ChatCompletionRequest, ChatMessage, GraphEdge, GraphNode, GraphSearchResult};
+
+#[derive(Debug, Deserialize)]
+struct ExtractedEntity {
+    name: String,
+    #[serde(default, alias = "entity_type")]
+    r#type: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExtractedRel {
+    source: String,
+    target: String,
+    #[serde(default, alias = "type")]
+    relation: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct Extraction {
+    #[serde(default)]
+    entities: Vec<ExtractedEntity>,
+    #[serde(default)]
+    relationships: Vec<ExtractedRel>,
+}
+
+/// Extract entities + relationships from a document using the chat LLM and store
+/// them as graph nodes/edges linked to the document. Best-effort: returns
+/// (entity_count, relationship_count); on LLM/parse failure returns (0, 0).
+pub async fn extract_and_store_graph(
+    pool: &SqlitePool,
+    llm: &LlmClient,
+    chat_model: &str,
+    document_id: &str,
+    content: &str,
+    database_name: &str,
+    collection_name: &str,
+) -> Result<(usize, usize)> {
+    let snippet: String = content.chars().take(6000).collect();
+    let prompt = format!(
+        "Extract the key entities and the relationships between them from the text. \
+         Respond with ONLY a JSON object, no prose, in exactly this shape:\n\
+         {{\"entities\":[{{\"name\":\"...\",\"type\":\"person|org|place|concept|other\"}}],\
+         \"relationships\":[{{\"source\":\"entity name\",\"target\":\"entity name\",\"relation\":\"short phrase\"}}]}}\n\n\
+         Text:\n{snippet}\n\nJSON:"
+    );
+
+    let req = ChatCompletionRequest {
+        model: chat_model.to_string(),
+        messages: vec![ChatMessage { role: "user".to_string(), content: prompt, name: None }],
+        temperature: Some(0.1),
+        max_tokens: Some(1024),
+        stream: Some(false),
+        top_p: None,
+        stop: None,
+    };
+
+    let resp = llm.chat(&req).await?;
+    let raw = resp.choices.first().map(|c| c.message.content.clone()).unwrap_or_default();
+    let extraction = parse_extraction(&raw).unwrap_or_default();
+
+    let mut entity_ids: HashMap<String, String> = HashMap::new();
+    for e in extraction.entities.iter().take(40) {
+        let label = e.name.trim();
+        if label.is_empty() {
+            continue;
+        }
+        let id = upsert_entity(pool, label, e.r#type.as_deref(), document_id, database_name, collection_name).await?;
+        entity_ids.insert(label.to_lowercase(), id);
+    }
+
+    let mut rel_count = 0usize;
+    for r in extraction.relationships.iter().take(60) {
+        let src = r.source.trim();
+        let tgt = r.target.trim();
+        if src.is_empty() || tgt.is_empty() {
+            continue;
+        }
+        let source_id = match entity_ids.get(&src.to_lowercase()) {
+            Some(id) => id.clone(),
+            None => upsert_entity(pool, src, None, document_id, database_name, collection_name).await?,
+        };
+        let target_id = match entity_ids.get(&tgt.to_lowercase()) {
+            Some(id) => id.clone(),
+            None => upsert_entity(pool, tgt, None, document_id, database_name, collection_name).await?,
+        };
+        let relation = r.relation.as_deref().unwrap_or("related_to").trim().to_string();
+        create_edge(pool, &GraphEdge {
+            id: Uuid::new_v4().to_string(),
+            source_id,
+            target_id,
+            relation: if relation.is_empty() { "related_to".to_string() } else { relation },
+            weight: 1.0,
+            properties: serde_json::Value::Object(Default::default()),
+            created_at: chrono::Utc::now(),
+        })
+        .await?;
+        rel_count += 1;
+    }
+
+    Ok((entity_ids.len(), rel_count))
+}
+
+/// Find an entity node by label within the scope, or create it linked to the document.
+async fn upsert_entity(
+    pool: &SqlitePool,
+    label: &str,
+    entity_type: Option<&str>,
+    document_id: &str,
+    database_name: &str,
+    collection_name: &str,
+) -> Result<String> {
+    let existing = find_nodes_by_label(pool, label, database_name, collection_name).await?;
+    if let Some(n) = existing.first() {
+        return Ok(n.id.clone());
+    }
+    let properties = match entity_type {
+        Some(t) if !t.is_empty() => serde_json::json!({ "type": t }),
+        _ => serde_json::Value::Object(Default::default()),
+    };
+    let node = GraphNode {
+        id: Uuid::new_v4().to_string(),
+        label: label.to_string(),
+        properties,
+        document_id: Some(document_id.to_string()),
+        database_name: database_name.to_string(),
+        collection_name: collection_name.to_string(),
+        created_at: chrono::Utc::now(),
+    };
+    let id = node.id.clone();
+    create_node(pool, &node).await?;
+    Ok(id)
+}
+
+/// Pull the first JSON object out of an LLM response (tolerating code fences/prose).
+fn parse_extraction(raw: &str) -> Option<Extraction> {
+    let start = raw.find('{')?;
+    let end = raw.rfind('}')?;
+    if end <= start {
+        return None;
+    }
+    serde_json::from_str::<Extraction>(&raw[start..=end]).ok()
+}
 
 fn parse_node(
     id: String,

@@ -3,8 +3,9 @@ use layerzero_core::{
     config::Config,
     database::ensure_collection,
     db::connect,
-    embedding::{embed_document, search_similar},
+    embedding::embed_document,
     graph::bfs_traverse,
+    retrieval::{retrieve, RagMode},
     llm::LlmClient,
     rag::rag_query,
     types::RagRequest,
@@ -72,6 +73,17 @@ pub async fn store_memory(ctx: &ToolContext, args: &Value) -> Result<Value> {
         tracing::warn!("embedding failed: {}", e);
     }
 
+    if ctx.config.rag.extract_graph && ctx.config.rag.mode != "vector" {
+        let chat_model = ctx.config.effective_chat().model;
+        if let Err(e) = layerzero_core::graph::extract_and_store_graph(
+            &ctx.pool, &ctx.llm, &chat_model, &id, content, database, collection,
+        )
+        .await
+        {
+            tracing::warn!("graph extraction failed: {}", e);
+        }
+    }
+
     Ok(serde_json::json!({ "id": id, "stored": true, "database": database, "collection": collection }))
 }
 
@@ -81,8 +93,10 @@ pub async fn search_memory(ctx: &ToolContext, args: &Value) -> Result<Value> {
     let database = get_db(args);
     let collection = get_col(args);
 
-    let results = search_similar(
-        &ctx.pool, &ctx.llm, query, &ctx.config.llm.embedding_model, limit, 0.0, database, collection,
+    let mode = RagMode::parse(&ctx.config.rag.mode);
+    let results = retrieve(
+        &ctx.pool, &ctx.llm, query, &ctx.config.llm.embedding_model, limit, mode,
+        ctx.config.rag.rerank, database, collection,
     )
     .await?;
 
@@ -117,7 +131,8 @@ pub async fn rag_tool(ctx: &ToolContext, args: &Value) -> Result<Value> {
             model: None,
             embedding_model: None,
             use_graph: false,
-            rerank: true,
+            rerank: ctx.config.rag.rerank,
+            mode: Some(ctx.config.rag.mode.clone()),
             stream: false,
             database,
             collection,

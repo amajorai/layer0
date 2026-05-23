@@ -284,6 +284,8 @@ pub struct SearchRequest {
     pub use_graph: bool,
     #[serde(default)]
     pub rerank: bool,
+    /// "hybrid" | "vector" | "graph". Falls back to the server's [rag] config.
+    pub mode: Option<String>,
     pub model: Option<String>,
     #[serde(default = "default_db")]
     pub database: String,
@@ -307,6 +309,8 @@ pub struct RagRequest {
     pub use_graph: bool,
     #[serde(default)]
     pub rerank: bool,
+    /// "hybrid" | "vector" | "graph". Falls back to the server's [rag] config.
+    pub mode: Option<String>,
     #[serde(default)]
     pub stream: bool,
     #[serde(default = "default_db")]

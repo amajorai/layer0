@@ -8,6 +8,7 @@ pub mod installer;
 pub mod llm;
 pub mod rag;
 pub mod rerank;
+pub mod retrieval;
 pub mod types;
 pub mod updater;
 

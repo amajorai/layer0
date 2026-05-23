@@ -20,13 +20,18 @@ offline on any computer** out of the box.
   the matched chunk for tight context.
 - **sqlite-vec ANN index** — cosine KNN over a `vec0` virtual table, not a brute
   force scan.
-- **Hybrid search** — vector + FTS5 BM25 fused with Reciprocal Rank Fusion, with
-  optional reranking and knowledge-graph expansion.
+- **Configurable RAG modes** — `hybrid` (vector + knowledge graph, then rerank,
+  default), `vector` (semantic only), or `graph` (graph-led). Vector + FTS5 BM25
+  are fused with Reciprocal Rank Fusion.
+- **Knowledge graph, auto-built at ingest** — entities + relationships are
+  extracted by the chat LLM when documents are stored, so graph/hybrid retrieval
+  has real data (not just manually-added nodes).
 - **Local-first, zero-config** — `serve` installs llama.cpp, downloads the
-  default embedding (nomic) + chat (gemma) models, and starts the sidecar(s).
+  default embedding (nomic) + chat (gemma-4-E4B) models, and starts the sidecar(s).
 - **Flexible chat backend** — resolves ACP (planned) → a remote backend like
   Claude (when an API key is set) → a local gemma model. No key required.
-- **OpenAI-compatible API**, **MCP server**, and a **CLI**.
+- **OpenAI-compatible API**, **MCP server**, and a **CLI** (incl. a `layerzero
+  config` TUI for editing settings).
 - **Optional API-key auth**, multi-database / multi-collection scoping.
 - **Self-update** from GitHub releases (`layerzero update`), configurable.
 - Single SQLite database — no external services.
@@ -92,7 +97,7 @@ layerzero serve
 
 On first run this installs llama.cpp, downloads the default embedding model
 (`nomic-embed-text-v1.5`) and — if no chat key is set — the local chat model
-(`gemma-3-4b-it`), starts the sidecar(s), and serves on
+(`gemma-4-E4B-it`), starts the sidecar(s), and serves on
 `http://127.0.0.1:8080`. To use Claude instead of local gemma, set
 `ANTHROPIC_API_KEY` before serving.
 
@@ -113,11 +118,14 @@ Global config: `~/.layerzero/config.toml` (see `config/default.toml` for the
 fully-commented template). Environment overrides use the `LAYERZERO__` prefix
 (double underscore separates nested keys, e.g. `LAYERZERO__SERVER__PORT`).
 
+Edit it interactively with `layerzero config` (a ratatui TUI) or by hand.
+
 Key sections: `[server]` (host/port/cors, optional `api_key`), `[llm]` (local
 embeddings backend), `[chat]` (remote chat backend), `[embeddings]` (dimensions
 — must match the model, nomic = 768), `[chunking]` (chunk_size/overlap),
-`[installer]` (model repos/files, ports, `auto_start`), `[update]` (repo,
-auto_check, auto_update).
+`[rag]` (`mode` = hybrid/vector/graph, `rerank`, `extract_graph`), `[installer]`
+(model repos/files, ports, `auto_start`), `[update]` (repo, auto_check,
+auto_update).
 
 ### Auth
 

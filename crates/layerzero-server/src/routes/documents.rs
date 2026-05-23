@@ -69,6 +69,18 @@ async fn create_document_in(
         {
             tracing::warn!("embedding failed for {}: {}", id, e);
         }
+
+        // Build the knowledge graph at ingest so graph/hybrid retrieval has data.
+        if state.config.rag.extract_graph && state.config.rag.mode != "vector" {
+            let chat_model = state.chat_model().to_string();
+            if let Err(e) = layerzero_core::graph::extract_and_store_graph(
+                &state.pool, &state.llm, &chat_model, &id, &req.content, database, collection,
+            )
+            .await
+            {
+                tracing::warn!("graph extraction failed for {}: {}", id, e);
+            }
+        }
     }
 
     if let Some(nodes) = &req.nodes {

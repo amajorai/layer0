@@ -1,6 +1,6 @@
 [package]
 name = "layerzero"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2021"
 
 [[bin]]
@@ -22,3 +22,6 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 indicatif = { workspace = true }
 dirs = { workspace = true }
+toml = { workspace = true }
+ratatui = { workspace = true }
+crossterm = { workspace = true }

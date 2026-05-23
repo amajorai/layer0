@@ -38,15 +38,26 @@ search_limit = 1000
 chunk_size = 512
 chunk_overlap = 64
 
+[rag]
+# Retrieval strategy: "hybrid" (vector + knowledge graph, then rerank),
+# "vector" (semantic only), or "graph" (graph-led, vector-seeded).
+mode = "hybrid"
+# Rerank the final results by query relevance.
+rerank = true
+# Build the knowledge graph (entities + relationships) at ingest so graph/hybrid
+# retrieval has data. Auto-skipped in "vector" mode.
+extract_graph = true
+
 [installer]
 llama_server_port = 8081
 # Default embedding model, auto-downloaded on first run.
 embedding_repo = "nomic-ai/nomic-embed-text-v1.5-GGUF"
 embedding_file = "nomic-embed-text-v1.5.Q4_K_M.gguf"
 # Default local chat model (offline fallback when no remote chat key is set).
-# gemma-3-4b runs on most machines; override for smaller/larger hardware.
-chat_repo = "bartowski/google_gemma-3-4b-it-GGUF"
-chat_file = "google_gemma-3-4b-it-Q4_K_M.gguf"
+# gemma-4-E4B is Gemma 4's edge variant, sized to run on most machines.
+# For lighter hardware use bartowski/google_gemma-4-E2B-it-GGUF.
+chat_repo = "bartowski/google_gemma-4-E4B-it-GGUF"
+chat_file = "google_gemma-4-E4B-it-Q4_K_M.gguf"
 chat_server_port = 8082
 # Auto-install llama.cpp + download models + start the sidecar(s) on `serve`.
 auto_start = true

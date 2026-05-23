@@ -10,8 +10,21 @@ pub struct Config {
     pub chat: ChatConfig,
     pub embeddings: EmbeddingsConfig,
     pub chunking: ChunkingConfig,
+    pub rag: RagConfig,
     pub installer: InstallerConfig,
     pub update: UpdateConfig,
+}
+
+/// Retrieval strategy.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RagConfig {
+    /// "hybrid" (vector + graph, then rerank), "vector", or "graph".
+    pub mode: String,
+    /// Apply a reranking pass to the final results.
+    pub rerank: bool,
+    /// Extract a knowledge graph (entities + relationships) at ingest time so
+    /// graph/hybrid retrieval has data. Skipped automatically in "vector" mode.
+    pub extract_graph: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -133,6 +146,11 @@ impl Default for Config {
                 chunk_size: 512,
                 chunk_overlap: 64,
             },
+            rag: RagConfig {
+                mode: "hybrid".to_string(),
+                rerank: true,
+                extract_graph: true,
+            },
             installer: InstallerConfig {
                 bin_dir: data_dir.join("bin"),
                 models_dir: data_dir.join("models"),
@@ -140,8 +158,8 @@ impl Default for Config {
                 hf_token: None,
                 embedding_repo: "nomic-ai/nomic-embed-text-v1.5-GGUF".to_string(),
                 embedding_file: "nomic-embed-text-v1.5.Q4_K_M.gguf".to_string(),
-                chat_repo: "bartowski/google_gemma-3-4b-it-GGUF".to_string(),
-                chat_file: "google_gemma-3-4b-it-Q4_K_M.gguf".to_string(),
+                chat_repo: "bartowski/google_gemma-4-E4B-it-GGUF".to_string(),
+                chat_file: "google_gemma-4-E4B-it-Q4_K_M.gguf".to_string(),
                 chat_server_port: 8082,
                 auto_start: true,
             },
@@ -198,6 +216,9 @@ impl Config {
             .set_default("embeddings.search_limit", default.embeddings.search_limit as i64)?
             .set_default("chunking.chunk_size", default.chunking.chunk_size as i64)?
             .set_default("chunking.chunk_overlap", default.chunking.chunk_overlap as i64)?
+            .set_default("rag.mode", default.rag.mode.clone())?
+            .set_default("rag.rerank", default.rag.rerank)?
+            .set_default("rag.extract_graph", default.rag.extract_graph)?
             .set_default("installer.bin_dir", default.installer.bin_dir.to_string_lossy().as_ref())?
             .set_default("installer.models_dir", default.installer.models_dir.to_string_lossy().as_ref())?
             .set_default("installer.llama_server_port", default.installer.llama_server_port as i64)?

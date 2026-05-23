@@ -1,3 +1,5 @@
+mod tui;
+
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 use layerzero_core::{
@@ -7,10 +9,11 @@ use layerzero_core::{
         list_collections, list_databases,
     },
     db::connect,
-    embedding::{embed_document, search_similar},
+    embedding::embed_document,
     installer::{download_hf_model, install_llama_cpp, list_installed_models},
     llm::LlmClient,
     rag::rag_query,
+    retrieval::{retrieve, RagMode},
     types::RagRequest,
 };
 use std::path::PathBuf;
@@ -103,6 +106,8 @@ enum Commands {
     Mcp,
     /// Update layerzero to the latest GitHub release
     Update,
+    /// Edit configuration in an interactive TUI
+    Config,
 }
 
 #[derive(Subcommand)]
@@ -292,15 +297,28 @@ async fn main() -> Result<()> {
                     Ok(n) => eprintln!("embedded {} chunk(s)", n),
                     Err(e) => eprintln!("warning: embedding failed: {}", e),
                 }
+
+                if config.rag.extract_graph && config.rag.mode != "vector" {
+                    let chat_model = config.effective_chat().model;
+                    if let Err(e) = layerzero_core::graph::extract_and_store_graph(
+                        &pool, &llm, &chat_model, &id, &content, &database, &collection,
+                    )
+                    .await
+                    {
+                        eprintln!("warning: graph extraction failed: {}", e);
+                    }
+                }
             }
 
             println!("{}", id);
         }
 
-        Commands::Search { query, limit, rerank: _, json, database, collection } => {
+        Commands::Search { query, limit, rerank, json, database, collection } => {
             let pool = connect(&config).await?;
             let llm = LlmClient::new(&config.llm, &config.effective_chat())?;
-            let results = search_similar(&pool, &llm, &query, &config.llm.embedding_model, limit, 0.0, &database, &collection).await?;
+            let mode = RagMode::parse(&config.rag.mode);
+            let do_rerank = rerank || config.rag.rerank;
+            let results = retrieve(&pool, &llm, &query, &config.llm.embedding_model, limit, mode, do_rerank, &database, &collection).await?;
 
             if json {
                 println!("{}", serde_json::to_string_pretty(&results)?);
@@ -330,7 +348,8 @@ async fn main() -> Result<()> {
                     model: None,
                     embedding_model: None,
                     use_graph,
-                    rerank: true,
+                    rerank: config.rag.rerank,
+                    mode: Some(if use_graph { "graph".to_string() } else { config.rag.mode.clone() }),
                     stream: false,
                     database,
                     collection,
@@ -487,6 +506,19 @@ async fn main() -> Result<()> {
                     println!("restart any running layerzero processes to apply.");
                 }
             }
+        }
+
+        Commands::Config => {
+            let cfg_path = cli
+                .config
+                .clone()
+                .unwrap_or_else(|| layerzero_core::config::default_data_dir().join("config.toml"));
+            if !cfg_path.exists() {
+                config.ensure_dirs()?;
+                std::fs::write(&cfg_path, include_str!("../../../config/default.toml"))?;
+                println!("created config: {}", cfg_path.display());
+            }
+            tui::run(&cfg_path)?;
         }
     }
 
