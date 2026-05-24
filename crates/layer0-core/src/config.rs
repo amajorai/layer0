@@ -266,7 +266,8 @@ impl Config {
     }
 
     pub fn db_url(&self) -> String {
-        format!("sqlite://{}?mode=rwc", self.database.path.display())
+        let path_str = self.database.path.to_string_lossy().replace('\\', "/");
+        format!("sqlite://{}?mode=rwc", path_str)
     }
 
     /// True when chat falls back to the local llama sidecar (no remote chat key
@@ -298,14 +299,11 @@ impl Config {
     }
 
     pub fn db_url_for(&self, database: &str) -> String {
-        if database == "default" {
-            self.db_url()
-        } else {
-            format!(
-                "sqlite://{}?mode=rwc",
-                self.databases_dir().join(format!("{}.db", database)).display()
-            )
-        }
+        let path = self.databases_dir().join(format!("{}.db", database));
+        // SQLite URI format requires forward slashes on all platforms.
+        // On Windows `Path::display()` yields backslashes which SQLite rejects.
+        let path_str = path.to_string_lossy().replace('\\', "/");
+        format!("sqlite://{}?mode=rwc", path_str)
     }
 
     pub fn ensure_dirs(&self) -> Result<()> {

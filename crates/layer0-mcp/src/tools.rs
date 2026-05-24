@@ -1,4 +1,8 @@
 use anyhow::Result;
+
+/// Hard cap on the number of simultaneously cached per-database pools.
+const MAX_DB_POOLS: usize = 64;
+
 use layer0_core::{
     config::Config,
     database::{
@@ -37,9 +41,17 @@ impl ToolContext {
         if database == "default" {
             return Ok(self.pool.clone());
         }
+        // Validate before any path construction or FS access.
+        layer0_core::database::validate_name_pub(database)?;
         let mut guard = self.db_pools.lock().await;
         if let Some(p) = guard.get(database) {
             return Ok(p.clone());
+        }
+        if guard.len() >= MAX_DB_POOLS {
+            return Err(anyhow::anyhow!(
+                "too many open databases (limit {}); close unused databases before opening more",
+                MAX_DB_POOLS
+            ));
         }
         let p = connect_database(&self.config, database).await?;
         guard.insert(database.to_string(), p.clone());
