@@ -291,6 +291,23 @@ impl Config {
         }
     }
 
+    pub fn databases_dir(&self) -> std::path::PathBuf {
+        self.database.path.parent()
+            .unwrap_or(std::path::Path::new("."))
+            .join("databases")
+    }
+
+    pub fn db_url_for(&self, database: &str) -> String {
+        if database == "default" {
+            self.db_url()
+        } else {
+            format!(
+                "sqlite://{}?mode=rwc",
+                self.databases_dir().join(format!("{}.db", database)).display()
+            )
+        }
+    }
+
     pub fn ensure_dirs(&self) -> Result<()> {
         std::fs::create_dir_all(default_data_dir())?;
         std::fs::create_dir_all(&self.installer.bin_dir)?;
@@ -298,6 +315,7 @@ impl Config {
         if let Some(parent) = self.database.path.parent() {
             std::fs::create_dir_all(parent)?;
         }
+        std::fs::create_dir_all(self.databases_dir())?;
         Ok(())
     }
 }

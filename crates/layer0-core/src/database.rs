@@ -81,7 +81,7 @@ pub async fn get_database(pool: &SqlitePool, name: &str) -> Result<Option<Databa
     }))
 }
 
-pub async fn create_database(pool: &SqlitePool, name: &str, description: Option<&str>) -> Result<Database> {
+pub async fn create_database(pool: &SqlitePool, config: &crate::config::Config, name: &str, description: Option<&str>) -> Result<Database> {
     validate_name(name)?;
     let now = now_str();
     sqlx::query(
@@ -93,6 +93,12 @@ pub async fn create_database(pool: &SqlitePool, name: &str, description: Option<
     .execute(pool)
     .await?;
 
+    // Create the dedicated .db file for this database
+    if name != "default" {
+        let db_pool = crate::db::connect_database(config, name).await?;
+        db_pool.close().await;
+    }
+
     Ok(Database {
         name: name.to_string(),
         description: description.map(String::from),
@@ -100,20 +106,22 @@ pub async fn create_database(pool: &SqlitePool, name: &str, description: Option<
     })
 }
 
-pub async fn delete_database(pool: &SqlitePool, name: &str) -> Result<bool> {
+pub async fn delete_database(pool: &SqlitePool, config: &crate::config::Config, name: &str) -> Result<bool> {
     if name == "default" {
         return Err(anyhow::anyhow!("cannot delete the default database"));
     }
-    crate::embedding::purge_collection_vectors(pool, name, None).await?;
-    let mut tx = pool.begin().await?;
-    sqlx::query("DELETE FROM documents WHERE database_name = ?").bind(name).execute(&mut *tx).await?;
-    sqlx::query("DELETE FROM graph_nodes WHERE database_name = ?").bind(name).execute(&mut *tx).await?;
-    sqlx::query("DELETE FROM collections WHERE database_name = ?").bind(name).execute(&mut *tx).await?;
+    // Remove collections from registry
+    sqlx::query("DELETE FROM collections WHERE database_name = ?").bind(name).execute(pool).await?;
+    // Remove from databases registry
     let r = sqlx::query("DELETE FROM databases WHERE name = ?")
         .bind(name)
-        .execute(&mut *tx)
+        .execute(pool)
         .await?;
-    tx.commit().await?;
+    // Delete the dedicated .db file
+    let db_path = config.databases_dir().join(format!("{}.db", name));
+    if db_path.exists() {
+        std::fs::remove_file(&db_path)?;
+    }
     Ok(r.rows_affected() > 0)
 }
 

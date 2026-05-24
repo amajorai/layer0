@@ -23,7 +23,7 @@ pub async fn create_database_route(
     if req.name.trim().is_empty() {
         return Err(ApiError::BadRequest("database name cannot be empty".into()));
     }
-    let db = create_database(&state.pool, &req.name, req.description.as_deref())
+    let db = create_database(&state.pool, &state.config, &req.name, req.description.as_deref())
         .await
         .map_err(anyhow::Error::from)?;
     Ok(Json(db))
@@ -43,7 +43,7 @@ pub async fn delete_database_route(
     State(state): State<AppState>,
     Path(database): Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    delete_database(&state.pool, &database)
+    delete_database(&state.pool, &state.config, &database)
         .await
         .map_err(anyhow::Error::from)?;
     Ok(Json(serde_json::json!({ "deleted": true, "database": database })))

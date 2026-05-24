@@ -33,6 +33,22 @@ pub async fn connect(config: &Config) -> Result<SqlitePool> {
     Ok(pool)
 }
 
+pub async fn connect_database(config: &Config, database: &str) -> Result<SqlitePool> {
+    if database == "default" {
+        return connect(config).await;
+    }
+    config.ensure_dirs()?;
+    register_sqlite_vec();
+    let url = config.db_url_for(database);
+    info!("connecting to database: {}", url);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(config.database.max_connections)
+        .connect(&url)
+        .await?;
+    run_migrations(&pool, config.embeddings.dimensions).await?;
+    Ok(pool)
+}
+
 async fn apply_migration(pool: &SqlitePool, name: &str, sql: &str) -> Result<()> {
     let exists: bool = sqlx::query_scalar(
         "SELECT COUNT(*) > 0 FROM _migrations WHERE name = ?"

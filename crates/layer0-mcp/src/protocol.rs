@@ -141,5 +141,68 @@ pub fn all_tools() -> Vec<McpTool> {
                 }
             }),
         },
+        McpTool {
+            name: "list_databases".into(),
+            description: "List all databases in the layer0 memory store.".into(),
+            input_schema: serde_json::json!({ "type": "object", "properties": {} }),
+        },
+        McpTool {
+            name: "create_database".into(),
+            description: "Create a new named database with its own isolated SQLite file.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Database name (alphanumeric, hyphens, underscores, dots)" },
+                    "description": { "type": "string", "description": "Optional description" }
+                },
+                "required": ["name"]
+            }),
+        },
+        McpTool {
+            name: "delete_database".into(),
+            description: "Delete a named database and its dedicated SQLite file. Cannot delete 'default'.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Database name to delete" }
+                },
+                "required": ["name"]
+            }),
+        },
+        McpTool {
+            name: "list_collections".into(),
+            description: "List all collections within a database.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "database": db_col_props()["database"].clone()
+                }
+            }),
+        },
+        McpTool {
+            name: "create_collection".into(),
+            description: "Create a new collection within a database.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "database": db_col_props()["database"].clone(),
+                    "name": { "type": "string", "description": "Collection name" },
+                    "description": { "type": "string", "description": "Optional description" }
+                },
+                "required": ["name"]
+            }),
+        },
+        McpTool {
+            name: "delete_collection".into(),
+            description: "Delete a collection and all its data within a database. Cannot delete 'default/default'.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "database": db_col_props()["database"].clone(),
+                    "name": { "type": "string", "description": "Collection name to delete" }
+                },
+                "required": ["name"]
+            }),
+        },
     ]
 }

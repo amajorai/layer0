@@ -54,7 +54,7 @@ To connect via MCP, add to `.claude/mcp.json` (or `.cursor/mcp.json`):
 
 `layer0 init` writes this file automatically.
 
-MCP tools: `store_memory`, `search_memory`, `rag_query`, `get_document`, `delete_memory`, `graph_query`, `memory_stats`.
+MCP tools: `store_memory`, `search_memory`, `rag_query`, `get_document`, `delete_memory`, `graph_query`, `memory_stats`, `list_databases`, `create_database`, `delete_database`, `list_collections`, `create_collection`, `delete_collection`.
 
 ## How it works
 
@@ -273,6 +273,8 @@ Chat resolution: ACP *(planned)* → remote backend (when API key present) → l
 | `graph_nodes` / `graph_edges` | Knowledge graph |
 | `databases` / `collections` | Named scopes |
 | `models` | Model registry |
+
+Named databases each get a dedicated SQLite file at `~/.layer0/databases/<name>.db`.
 
 ## License
 
