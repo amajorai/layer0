@@ -56,6 +56,31 @@ To connect via MCP, add to `.claude/mcp.json` (or `.cursor/mcp.json`):
 
 MCP tools: `store_memory`, `search_memory`, `rag_query`, `get_document`, `delete_memory`, `graph_query`, `memory_stats`.
 
+## How it works
+
+**Ingest**
+```mermaid
+flowchart LR
+    D([Document]) --> C[Chunk\n512 tok · 64 overlap]
+    C --> E[Embed\nnomic]
+    E --> V[(vec_chunks\nsqlite-vec)]
+    D --> F[(documents_fts\nBM25)]
+    D --> X[Graph extract\nLLM]
+    X --> G[(graph_nodes\ngraph_edges)]
+```
+
+**Retrieval**
+```mermaid
+flowchart LR
+    Q([Query]) --> V[Vector ANN\nsqlite-vec]
+    Q --> B[BM25\nFTS5]
+    V --> R[RRF fusion]
+    B --> R
+    R --> G[Graph\ntraversal]
+    G --> Re[Rerank]
+    Re --> A([Answer])
+```
+
 ## Features
 
 - **Hybrid RAG** — vector ANN + knowledge graph fused with Reciprocal Rank Fusion, then reranked. Or run `vector`-only or `graph`-only mode.
@@ -226,13 +251,14 @@ GET  /health                    liveness (no auth)
 
 ## Architecture
 
-```
-crates/
-  layer0-core/    DB, chunking, embeddings, sqlite-vec, graph, RAG, LLM client, installer, updater
-  layer0-server/  HTTP API (OpenAI-compatible) + auth + bootstrap
-  layer0-cli/     layer0 binary
-  layer0-mcp/     MCP server
-skills/           agentskills.io skills
+```mermaid
+graph LR
+    CLI[layer0 CLI] --> Core
+    Server[HTTP Server\nOpenAI-compatible] --> Core
+    MCP[MCP Server\nstdio JSON-RPC] --> Core
+    Core[layer0-core\nRAG · graph · embeddings · DB] --> DB[(SQLite\nlayer0.db)]
+    Core --> Sidecar[llama.cpp sidecar\nembeddings · chat fallback]
+    Core --> Remote[Remote API\nClaude · any OpenAI-compat]
 ```
 
 Chat resolution: ACP *(planned)* → remote backend (when API key present) → local gemma sidecar. Embeddings are always local unless `[llm].base_url` points at a remote endpoint.
