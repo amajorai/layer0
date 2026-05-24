@@ -12,8 +12,6 @@ It is **frictionless**: `layer0 serve` auto-installs llama.cpp, auto-downloads
 the default models, and starts the local sidecar for you. It runs **fully
 offline on any computer** out of the box.
 
----
-
 ## Features
 
 - **Chunked retrieval** — documents are chunked and embedded per chunk; RAG uses
@@ -35,8 +33,6 @@ offline on any computer** out of the box.
 - **Optional API-key auth**, multi-database / multi-collection scoping.
 - **Self-update** from GitHub releases (`layer0 update`), configurable.
 - Single SQLite database — no external services.
-
----
 
 ## Architecture
 
@@ -64,8 +60,6 @@ layer0/
 Embeddings are always local (nomic via the sidecar), unless you point
 `[llm].base_url` at a remote embeddings endpoint — in which case the sidecar is
 skipped automatically.
-
----
 
 ## Quick start
 
@@ -110,8 +104,6 @@ layer0 ask "What does layer0 use for vector search?"
 layer0 status
 ```
 
----
-
 ## Configuration
 
 Global config: `~/.layer0/config.toml` (see `config/default.toml` for the
@@ -132,8 +124,6 @@ auto_update).
 Set `[server].api_key` to require `X-API-Key` (or `Authorization: Bearer`) on
 every request except `/health`. Unset = open (local default).
 
----
-
 ## HTTP API
 
 Base: `http://localhost:8080`. Highlights:
@@ -151,8 +141,6 @@ GET  /v1/stats                  counts
 GET  /health                    liveness (no auth)
 ```
 
----
-
 ## MCP
 
 ```sh
@@ -163,15 +151,11 @@ Tools: `store_memory`, `search_memory`, `rag_query`, `get_document`,
 `delete_memory`, `graph_query`, `memory_stats`. `layer0 init` writes the
 client config; or add it manually to `.claude/mcp.json` / `.cursor/mcp.json`.
 
----
-
 ## Skills
 
 `skills/` contains [agentskills.io](https://agentskills.io)-compatible skills
 (`layer0-setup`, `layer0-memory`) — install them into any skills-aware
 agent (e.g. `npx skills add <repo>`).
-
----
 
 ## Updating
 
@@ -182,16 +166,12 @@ layer0 update     # self-update from the latest GitHub release
 `[update].auto_check` logs when a newer release exists on `serve`;
 `[update].auto_update` applies it on startup (takes effect on next restart).
 
----
-
 ## Releases & CI
 
 GitHub Actions build and test on Linux/macOS/Windows. Pushing a `v*.*.*` tag
 builds release binaries for five targets (linux x64/arm64, macOS x64/arm64,
 windows x64) and publishes them to a GitHub Release. Release asset names embed
 the Rust target triple, which the self-updater matches.
-
----
 
 ## Database schema (single SQLite file)
 
@@ -203,8 +183,6 @@ the Rust target triple, which the self-updater matches.
 | `graph_nodes` / `graph_edges` | Knowledge graph |
 | `databases` / `collections` | Named scopes |
 | `models` | Model registry |
-
----
 
 ## License
 
