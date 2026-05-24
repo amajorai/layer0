@@ -21,14 +21,24 @@ fn register_sqlite_vec() {
 pub async fn connect(config: &Config) -> Result<SqlitePool> {
     config.ensure_dirs()?;
     register_sqlite_vec();
-    let url = config.db_url();
-    info!("connecting to database: {}", url);
+    open_pool(config, &config.db_url()).await
+}
 
+pub async fn connect_database(config: &Config, database: &str) -> Result<SqlitePool> {
+    if database == "default" {
+        return connect(config).await;
+    }
+    config.ensure_dirs()?;
+    register_sqlite_vec();
+    open_pool(config, &config.db_url_for(database)).await
+}
+
+async fn open_pool(config: &Config, url: &str) -> Result<SqlitePool> {
+    info!("connecting to database: {}", url);
     let pool = SqlitePoolOptions::new()
         .max_connections(config.database.max_connections)
-        .connect(&url)
+        .connect(url)
         .await?;
-
     run_migrations(&pool, config.embeddings.dimensions).await?;
     Ok(pool)
 }

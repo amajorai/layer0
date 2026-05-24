@@ -266,7 +266,8 @@ impl Config {
     }
 
     pub fn db_url(&self) -> String {
-        format!("sqlite://{}?mode=rwc", self.database.path.display())
+        let path_str = self.database.path.to_string_lossy().replace('\\', "/");
+        format!("sqlite://{}?mode=rwc", path_str)
     }
 
     /// True when chat falls back to the local llama sidecar (no remote chat key
@@ -291,6 +292,20 @@ impl Config {
         }
     }
 
+    pub fn databases_dir(&self) -> std::path::PathBuf {
+        self.database.path.parent()
+            .unwrap_or(std::path::Path::new("."))
+            .join("databases")
+    }
+
+    pub fn db_url_for(&self, database: &str) -> String {
+        let path = self.databases_dir().join(format!("{}.db", database));
+        // SQLite URI format requires forward slashes on all platforms.
+        // On Windows `Path::display()` yields backslashes which SQLite rejects.
+        let path_str = path.to_string_lossy().replace('\\', "/");
+        format!("sqlite://{}?mode=rwc", path_str)
+    }
+
     pub fn ensure_dirs(&self) -> Result<()> {
         std::fs::create_dir_all(default_data_dir())?;
         std::fs::create_dir_all(&self.installer.bin_dir)?;
@@ -298,6 +313,7 @@ impl Config {
         if let Some(parent) = self.database.path.parent() {
             std::fs::create_dir_all(parent)?;
         }
+        std::fs::create_dir_all(self.databases_dir())?;
         Ok(())
     }
 }

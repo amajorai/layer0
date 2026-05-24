@@ -8,7 +8,7 @@ use layer0_core::{
         create_collection, create_database, delete_collection, delete_database,
         list_collections, list_databases,
     },
-    db::connect,
+    db::{connect, connect_database},
     embedding::embed_document,
     installer::{download_hf_model, install_llama_cpp, list_installed_models},
     llm::LlmClient,
@@ -264,7 +264,7 @@ async fn main() -> Result<()> {
                 .map(|s| serde_json::from_str(s).unwrap_or_default())
                 .unwrap_or_default();
 
-            let pool = connect(&config).await?;
+            let pool = connect_database(&config, &database).await?;
             let id = uuid::Uuid::new_v4().to_string();
             let now = layer0_core::db::now_str();
             let meta_str = serde_json::to_string(&meta).unwrap_or_else(|_| "{}".into());
@@ -314,7 +314,7 @@ async fn main() -> Result<()> {
         }
 
         Commands::Search { query, limit, rerank, json, database, collection } => {
-            let pool = connect(&config).await?;
+            let pool = connect_database(&config, &database).await?;
             let llm = LlmClient::new(&config.llm, &config.effective_chat())?;
             let mode = RagMode::parse(&config.rag.mode);
             let do_rerank = rerank || config.rag.rerank;
@@ -335,7 +335,7 @@ async fn main() -> Result<()> {
         }
 
         Commands::Ask { question, limit, no_sources, use_graph, database, collection } => {
-            let pool = connect(&config).await?;
+            let pool = connect_database(&config, &database).await?;
             let llm = LlmClient::new(&config.llm, &config.effective_chat())?;
 
             eprintln!("searching knowledge base...");
@@ -416,11 +416,12 @@ async fn main() -> Result<()> {
                     #[derive(sqlx::FromRow)]
                     struct Row { id: String, content: String, source: Option<String> }
 
+                    let db_pool = connect_database(&config, &database).await?;
                     let rows: Vec<Row> = sqlx::query_as(
                         "SELECT id, content, source FROM documents WHERE database_name = ? AND collection_name = ? ORDER BY created_at DESC LIMIT ?"
                     )
                     .bind(&database).bind(&collection).bind(limit)
-                    .fetch_all(&pool)
+                    .fetch_all(&db_pool)
                     .await?;
 
                     for r in rows {
@@ -449,7 +450,7 @@ async fn main() -> Result<()> {
                     }
                 }
                 DbAction::CreateDatabase { name, description } => {
-                    create_database(&pool, &name, description.as_deref()).await?;
+                    create_database(&pool, &config, &name, description.as_deref()).await?;
                     println!("created database '{}'", name);
                 }
                 DbAction::CreateCollection { database, name, description } => {
@@ -457,7 +458,7 @@ async fn main() -> Result<()> {
                     println!("created collection '{}/{}'", database, name);
                 }
                 DbAction::DeleteDatabase { name } => {
-                    delete_database(&pool, &name).await?;
+                    delete_database(&pool, &config, &name).await?;
                     println!("deleted database '{}'", name);
                 }
                 DbAction::DeleteCollection { database, name } => {

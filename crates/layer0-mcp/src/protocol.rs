@@ -43,13 +43,6 @@ pub struct McpTool {
     pub input_schema: Value,
 }
 
-fn db_col_props() -> Value {
-    serde_json::json!({
-        "database": { "type": "string", "description": "Database name (default: \"default\")" },
-        "collection": { "type": "string", "description": "Collection name within the database (default: \"default\")" }
-    })
-}
-
 pub fn all_tools() -> Vec<McpTool> {
     vec![
         McpTool {
@@ -61,8 +54,8 @@ pub fn all_tools() -> Vec<McpTool> {
                     "content": { "type": "string", "description": "Content to store" },
                     "source": { "type": "string", "description": "Optional source identifier" },
                     "metadata": { "type": "object", "description": "Optional JSON metadata" },
-                    "database": db_col_props()["database"].clone(),
-                    "collection": db_col_props()["collection"].clone()
+                    "database": { "type": "string", "description": "Database name (default: \"default\")" },
+                    "collection": { "type": "string", "description": "Collection name within the database (default: \"default\")" }
                 },
                 "required": ["content"]
             }),
@@ -76,8 +69,8 @@ pub fn all_tools() -> Vec<McpTool> {
                     "query": { "type": "string", "description": "Search query" },
                     "limit": { "type": "integer", "description": "Max results (default: 5)" },
                     "rerank": { "type": "boolean", "description": "Apply reranking" },
-                    "database": db_col_props()["database"].clone(),
-                    "collection": db_col_props()["collection"].clone()
+                    "database": { "type": "string", "description": "Database name (default: \"default\")" },
+                    "collection": { "type": "string", "description": "Collection name within the database (default: \"default\")" }
                 },
                 "required": ["query"]
             }),
@@ -91,8 +84,8 @@ pub fn all_tools() -> Vec<McpTool> {
                     "query": { "type": "string", "description": "Question to answer" },
                     "limit": { "type": "integer", "description": "Context documents to use (default: 5)" },
                     "system_prompt": { "type": "string", "description": "Custom system prompt" },
-                    "database": db_col_props()["database"].clone(),
-                    "collection": db_col_props()["collection"].clone()
+                    "database": { "type": "string", "description": "Database name (default: \"default\")" },
+                    "collection": { "type": "string", "description": "Collection name within the database (default: \"default\")" }
                 },
                 "required": ["query"]
             }),
@@ -125,8 +118,8 @@ pub fn all_tools() -> Vec<McpTool> {
                     "start_label": { "type": "string" },
                     "depth": { "type": "integer", "description": "Traversal depth (default: 2)" },
                     "relation": { "type": "string", "description": "Filter by edge relation" },
-                    "database": db_col_props()["database"].clone(),
-                    "collection": db_col_props()["collection"].clone()
+                    "database": { "type": "string", "description": "Database name (default: \"default\")" },
+                    "collection": { "type": "string", "description": "Collection name within the database (default: \"default\")" }
                 }
             }),
         },
@@ -136,9 +129,72 @@ pub fn all_tools() -> Vec<McpTool> {
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "database": db_col_props()["database"].clone(),
-                    "collection": db_col_props()["collection"].clone()
+                    "database": { "type": "string", "description": "Database name (default: \"default\")" },
+                    "collection": { "type": "string", "description": "Collection name within the database (default: \"default\")" }
                 }
+            }),
+        },
+        McpTool {
+            name: "list_databases".into(),
+            description: "List all databases in the layer0 memory store.".into(),
+            input_schema: serde_json::json!({ "type": "object", "properties": {} }),
+        },
+        McpTool {
+            name: "create_database".into(),
+            description: "Create a new named database with its own isolated SQLite file.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Database name (alphanumeric, hyphens, underscores, dots)" },
+                    "description": { "type": "string", "description": "Optional description" }
+                },
+                "required": ["name"]
+            }),
+        },
+        McpTool {
+            name: "delete_database".into(),
+            description: "Delete a named database and its dedicated SQLite file. Cannot delete 'default'.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Database name to delete" }
+                },
+                "required": ["name"]
+            }),
+        },
+        McpTool {
+            name: "list_collections".into(),
+            description: "List all collections within a database.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "database": { "type": "string", "description": "Database name (default: \"default\")" }
+                }
+            }),
+        },
+        McpTool {
+            name: "create_collection".into(),
+            description: "Create a new collection within a database.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "database": { "type": "string", "description": "Database name (default: \"default\")" },
+                    "name": { "type": "string", "description": "Collection name" },
+                    "description": { "type": "string", "description": "Optional description" }
+                },
+                "required": ["name"]
+            }),
+        },
+        McpTool {
+            name: "delete_collection".into(),
+            description: "Delete a collection and all its data within a database. Cannot delete 'default/default'.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "database": { "type": "string", "description": "Database name (default: \"default\")" },
+                    "name": { "type": "string", "description": "Collection name to delete" }
+                },
+                "required": ["name"]
             }),
         },
     ]

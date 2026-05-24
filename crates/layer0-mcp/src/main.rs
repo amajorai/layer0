@@ -118,6 +118,12 @@ async fn dispatch(ctx: &ToolContext, name: &str, args: &Value) -> anyhow::Result
         "delete_memory" => tools::delete_memory_tool(ctx, args).await,
         "graph_query" => tools::graph_query_tool(ctx, args).await,
         "memory_stats" => tools::memory_stats_tool(ctx, args).await,
+        "list_databases" => tools::list_databases_tool(ctx, args).await,
+        "create_database" => tools::create_database_tool(ctx, args).await,
+        "delete_database" => tools::delete_database_tool(ctx, args).await,
+        "list_collections" => tools::list_collections_tool(ctx, args).await,
+        "create_collection" => tools::create_collection_tool(ctx, args).await,
+        "delete_collection" => tools::delete_collection_tool(ctx, args).await,
         other => Err(anyhow::anyhow!("unknown tool: {}", other)),
     }
 }
