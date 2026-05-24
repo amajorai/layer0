@@ -12,7 +12,7 @@ description: >-
   memory API, ANTHROPIC_API_KEY, MCP memory server setup.
 license: MIT
 metadata:
-  version: "0.0.1"
+  version: "0.2.0"
 compatibility: >-
   To build from source: Rust stable toolchain + a C toolchain (MSVC on Windows,
   gcc/clang on Linux/macOS). SQLite is bundled (no system SQLite required).
@@ -32,6 +32,10 @@ Chat/generation resolves in this order: an ACP client (planned) → a remote
 backend such as Claude (used only when an API key like `ANTHROPIC_API_KEY` is
 set) → a local gemma model served by the sidecar. So out of the box it runs
 fully offline on any computer; setting `ANTHROPIC_API_KEY` upgrades chat to Claude.
+
+**One binary. One SQLite file per database.** The `default` database lives at
+`~/.layer0/layer0.db`. Every other named database gets its own isolated file at
+`~/.layer0/databases/<name>.db`.
 
 This skill walks through installing and running it from scratch.
 
@@ -133,9 +137,33 @@ layer0 search "vector search"
 layer0 ask "What does layer0 use for vector search?"
 ```
 
+Named databases — each gets its own isolated SQLite file:
+
+```sh
+layer0 db create-database myproject           # creates ~/.layer0/databases/myproject.db
+layer0 store "project context" --database myproject
+layer0 search "context" --database myproject
+layer0 ask "question" --database myproject
+layer0 db delete-database myproject           # removes the .db file
+```
+
+Database and collection management via CLI:
+
+```sh
+layer0 db databases                           # list all databases
+layer0 db collections myproject               # list collections in a database
+layer0 db create-collection myproject notes   # create a collection
+layer0 db delete-collection myproject notes
+layer0 db stats                               # storage stats (default database)
+layer0 db list --database myproject           # list documents
+```
+
 The HTTP API base is `http://127.0.0.1:8080`, with OpenAI-compatible endpoints
-under `/v1/...` (e.g. `/v1/documents`, `/v1/search`, `/v1/rag`). See the
-`layer0-memory` skill for using these as an agent's long-term memory.
+under `/v1/...` (e.g. `/v1/documents`, `/v1/search`, `/v1/rag`). Database and
+collection management: `GET/POST /v1/db`, `DELETE /v1/db/:database`,
+`GET/POST /v1/db/:database/collections`, etc. See the `layer0-memory` skill
+for using these as an agent's long-term memory — including the 13 MCP tools
+for full database/collection CRUD.
 
 ## 5. Connect agents via MCP
 
