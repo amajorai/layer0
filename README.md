@@ -4,7 +4,13 @@
 
 Hybrid RAG (vector + knowledge graph) and long-term memory for AI agents — written in Rust, runs offline, no vendor lock-in.
 
-One binary. One SQLite file. `layer0 serve` and you're done.
+One binary. One SQLite file per database. `layer0 serve` and you're done.
+
+[![Stars](https://shieldcn.dev/github/stars/amajorai/layer0.svg)](https://github.com/amajorai/layer0)
+[![Forks](https://shieldcn.dev/github/forks/amajorai/layer0.svg)](https://github.com/amajorai/layer0)
+[![License](https://shieldcn.dev/github/license/amajorai/layer0.svg)](https://github.com/amajorai/layer0)
+[![Issues](https://shieldcn.dev/github/issues/amajorai/layer0.svg)](https://github.com/amajorai/layer0/issues)
+[![Release](https://shieldcn.dev/github/release/amajorai/layer0.svg)](https://github.com/amajorai/layer0/releases)
 
 ## Get started
 
@@ -26,6 +32,12 @@ layer0 serve    # auto-downloads models, starts sidecar, serves on :8080
 ```sh
 layer0 store "layer0 indexes chunks with sqlite-vec."
 layer0 ask "What does layer0 use for vector search?"
+
+# Named databases — each gets its own isolated SQLite file
+layer0 db create-database myproject
+layer0 store "project context" --database myproject
+layer0 search "context" --database myproject
+layer0 db delete-database myproject
 ```
 
 Set `ANTHROPIC_API_KEY` before `serve` to use Claude for chat/graph extraction instead of the local gemma fallback.
@@ -91,8 +103,9 @@ flowchart LR
 - **No vendor lock-in** — fully offline with local gemma, or swap in any OpenAI-compatible backend via config.
 - **OpenAI-compatible API**, MCP server, and CLI (including a `layer0 config` TUI).
 - **Optional API-key auth**, multi-database / multi-collection scoping.
+- **Per-database isolation** — each named database gets its own SQLite file; `default` stays backward-compatible.
 - **Self-update** — `layer0 update` pulls the latest release from GitHub.
-- Single SQLite file — no Docker, no external services.
+- No Docker, no external services.
 
 ## Configuration
 
@@ -232,6 +245,29 @@ auto_update = false
 | `auto_check` | `true` | Log when a newer release exists at startup. |
 | `auto_update` | `false` | Auto-apply updates at startup (takes effect on next restart). |
 
+## CLI — Databases & Collections
+
+```sh
+# Database management
+layer0 db databases                          # list all databases
+layer0 db create-database <name>             # create (also creates ~/.layer0/databases/<name>.db)
+layer0 db delete-database <name>             # delete database and its .db file
+
+# Collection management
+layer0 db collections <database>             # list collections in a database
+layer0 db create-collection <database> <name>
+layer0 db delete-collection <database> <name>
+
+# Scoped operations
+layer0 store "text" --database mydb --collection notes
+layer0 search "query" --database mydb --collection notes
+layer0 ask "question" --database mydb
+
+# Database stats and document list
+layer0 db stats
+layer0 db list --database mydb --collection notes
+```
+
 ## HTTP API
 
 Base: `http://localhost:8080`
@@ -244,9 +280,25 @@ GET/DELETE /v1/documents[/:id]  list / fetch / delete
 /v1/graph/...                   nodes, edges, BFS query
 POST /v1/embeddings             OpenAI-compatible
 POST /v1/chat/completions       OpenAI-compatible (routes to the chat backend)
-/v1/db/:database/:collection/... scoped variants of the above
 GET  /v1/stats                  counts
 GET  /health                    liveness (no auth)
+
+# Database & collection management
+GET    /v1/db                                list databases
+POST   /v1/db                                create database  {"name":"mydb"}
+GET    /v1/db/:database                      get database
+DELETE /v1/db/:database                      delete database + its .db file
+GET    /v1/db/:database/collections          list collections
+POST   /v1/db/:database/collections          create collection  {"name":"notes"}
+GET    /v1/db/:database/:collection          get collection
+DELETE /v1/db/:database/:collection          delete collection
+
+# Scoped data routes (each opens the database's own .db file)
+/v1/db/:database/:collection/documents       store / list
+/v1/db/:database/:collection/search          search
+/v1/db/:database/:collection/rag             RAG query
+/v1/db/:database/:collection/graph/...       nodes, edges, BFS
+/v1/db/:database/:collection/stats           scoped counts
 ```
 
 ## Architecture
@@ -256,7 +308,8 @@ graph LR
     CLI[layer0 CLI] --> Core
     Server[HTTP Server\nOpenAI-compatible] --> Core
     MCP[MCP Server\nstdio JSON-RPC] --> Core
-    Core[layer0-core\nRAG · graph · embeddings · DB] --> DB[(SQLite\nlayer0.db)]
+    Core[layer0-core\nRAG · graph · embeddings · DB] --> DB[(SQLite\nlayer0.db\ndefault)]
+    Core --> DBN[(SQLite\ndatabases/\nname.db)]
     Core --> Sidecar[llama.cpp sidecar\nembeddings · chat fallback]
     Core --> Remote[Remote API\nClaude · any OpenAI-compat]
 ```
@@ -265,16 +318,19 @@ Chat resolution: ACP *(planned)* → remote backend (when API key present) → l
 
 ## Database schema
 
+Each database is a self-contained SQLite file. The `default` database lives at `~/.layer0/layer0.db`; every other named database lives at `~/.layer0/databases/<name>.db`.
+
 | Table | Contents |
 |-------|----------|
 | `documents` | Source documents + metadata (FTS5 mirror in `documents_fts`) |
 | `chunks` | Per-document chunks (the retrieval unit) |
 | `vec_chunks` | sqlite-vec `vec0` cosine index over chunk embeddings |
 | `graph_nodes` / `graph_edges` | Knowledge graph |
-| `databases` / `collections` | Named scopes |
-| `models` | Model registry |
+| `collections` | Named sub-scopes within the database |
+| `databases` | Registry of all named databases (in `layer0.db` only) |
+| `models` | Model registry (in `layer0.db` only) |
 
-Named databases each get a dedicated SQLite file at `~/.layer0/databases/<name>.db`.
+Database names may contain letters, digits, `_`, `-`, `.` — max 64 characters. The names `NUL`, `CON`, `PRN`, `AUX`, `COM*`, `LPT*` are reserved on Windows and rejected.
 
 ## License
 
