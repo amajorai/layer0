@@ -1,4 +1,7 @@
-use axum::{extract::{Path, Query, State}, Json};
+use axum::{
+    extract::{Path, Query, State},
+    Json,
+};
 use chrono::Utc;
 use layer0_core::{
     database::ensure_collection,
@@ -40,7 +43,16 @@ async fn create_document_in(
         return Err(ApiError::BadRequest("content cannot be empty".into()));
     }
 
-    let pool = state.pool_for(database).await.map_err(anyhow::Error::from)?;
+    layer0_core::chunk::validate_content(
+        &req.content,
+        state.config.chunking.chunk_size,
+        state.config.chunking.chunk_overlap,
+    )
+    .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    let pool = state
+        .pool_for(database)
+        .await
+        .map_err(anyhow::Error::from)?;
 
     ensure_collection(&pool, database, collection)
         .await
@@ -63,9 +75,15 @@ async fn create_document_in(
     if req.embed {
         let model = state.embedding_model().to_string();
         if let Err(e) = embed_document(
-            &pool, &state.llm, &id, &req.content, &model,
-            database, collection,
-            state.config.chunking.chunk_size, state.config.chunking.chunk_overlap,
+            &pool,
+            &state.llm,
+            &id,
+            &req.content,
+            &model,
+            database,
+            collection,
+            state.config.chunking.chunk_size,
+            state.config.chunking.chunk_overlap,
         )
         .await
         {
@@ -76,7 +94,13 @@ async fn create_document_in(
         if state.config.rag.extract_graph && state.config.rag.mode != "vector" {
             let chat_model = state.chat_model().to_string();
             if let Err(e) = layer0_core::graph::extract_and_store_graph(
-                &pool, &state.llm, &chat_model, &id, &req.content, database, collection,
+                &pool,
+                &state.llm,
+                &chat_model,
+                &id,
+                &req.content,
+                database,
+                collection,
             )
             .await
             {
@@ -96,13 +120,16 @@ async fn create_document_in(
                 collection_name: collection.to_string(),
                 created_at: Utc::now(),
             };
-            create_node(&pool, &node).await.map_err(anyhow::Error::from)?;
+            create_node(&pool, &node)
+                .await
+                .map_err(anyhow::Error::from)?;
 
             if let Some(edges) = &node_req.edges {
                 for er in edges {
-                    let targets = find_nodes_by_label(&pool, &er.target_label, database, collection)
-                        .await
-                        .map_err(anyhow::Error::from)?;
+                    let targets =
+                        find_nodes_by_label(&pool, &er.target_label, database, collection)
+                            .await
+                            .map_err(anyhow::Error::from)?;
 
                     let target_id = if let Some(t) = targets.first() {
                         t.id.clone()
@@ -121,15 +148,18 @@ async fn create_document_in(
                         tid
                     };
 
-                    create_edge(&pool, &GraphEdge {
-                        id: Uuid::new_v4().to_string(),
-                        source_id: node.id.clone(),
-                        target_id,
-                        relation: er.relation.clone(),
-                        weight: er.weight,
-                        properties: er.properties.clone(),
-                        created_at: Utc::now(),
-                    })
+                    create_edge(
+                        &pool,
+                        &GraphEdge {
+                            id: Uuid::new_v4().to_string(),
+                            source_id: node.id.clone(),
+                            target_id,
+                            relation: er.relation.clone(),
+                            weight: er.weight,
+                            properties: er.properties.clone(),
+                            created_at: Utc::now(),
+                        },
+                    )
                     .await
                     .map_err(anyhow::Error::from)?;
                 }
@@ -153,7 +183,10 @@ pub async fn get_document(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<Json<Document>> {
-    match fetch_document(&state.pool, &id).await.map_err(anyhow::Error::from)? {
+    match fetch_document(&state.pool, &id)
+        .await
+        .map_err(anyhow::Error::from)?
+    {
         Some(doc) => Ok(Json(doc)),
         None => Err(ApiError::NotFound(format!("document {} not found", id))),
     }
@@ -205,16 +238,24 @@ async fn list_documents_in(
     collection: &str,
     q: ListQuery,
 ) -> ApiResult<Json<Vec<Document>>> {
-    let limit = q.limit.unwrap_or(20).min(100);
-    let offset = q.offset.unwrap_or(0);
+    let limit = q.limit.unwrap_or(20).clamp(1, 100);
+    let offset = q.offset.unwrap_or(0).max(0);
 
-    let pool = state.pool_for(database).await.map_err(anyhow::Error::from)?;
+    let pool = state
+        .pool_for(database)
+        .await
+        .map_err(anyhow::Error::from)?;
 
     #[derive(sqlx::FromRow)]
     struct Row {
-        id: String, content: String, metadata: String, source: Option<String>,
-        database_name: String, collection_name: String,
-        created_at: String, updated_at: String,
+        id: String,
+        content: String,
+        metadata: String,
+        source: Option<String>,
+        database_name: String,
+        collection_name: String,
+        created_at: String,
+        updated_at: String,
     }
 
     let rows: Vec<Row> = sqlx::query_as(
@@ -227,16 +268,20 @@ async fn list_documents_in(
     .await
     .map_err(anyhow::Error::from)?;
 
-    Ok(Json(rows.into_iter().map(|r| Document {
-        id: r.id,
-        content: r.content,
-        metadata: serde_json::from_str(&r.metadata).unwrap_or_default(),
-        source: r.source,
-        database_name: r.database_name,
-        collection_name: r.collection_name,
-        created_at: layer0_core::db::parse_dt(&r.created_at),
-        updated_at: layer0_core::db::parse_dt(&r.updated_at),
-    }).collect()))
+    Ok(Json(
+        rows.into_iter()
+            .map(|r| Document {
+                id: r.id,
+                content: r.content,
+                metadata: serde_json::from_str(&r.metadata).unwrap_or_default(),
+                source: r.source,
+                database_name: r.database_name,
+                collection_name: r.collection_name,
+                created_at: layer0_core::db::parse_dt(&r.created_at),
+                updated_at: layer0_core::db::parse_dt(&r.updated_at),
+            })
+            .collect(),
+    ))
 }
 
 pub async fn get_stats(State(state): State<AppState>) -> ApiResult<Json<Stats>> {
@@ -255,49 +300,65 @@ async fn get_stats_in(
     database: Option<&str>,
     collection: Option<&str>,
 ) -> ApiResult<Json<Stats>> {
-    let (doc_count, emb_count, node_count) = match (database, collection) {
-        (Some(db), Some(col)) => {
-            let pool = state.pool_for(db).await.map_err(anyhow::Error::from)?;
+    let (doc_count, emb_count, node_count) =
+        match (database, collection) {
+            (Some(db), Some(col)) => {
+                let pool = state.pool_for(db).await.map_err(anyhow::Error::from)?;
 
-            let doc: i64 = sqlx::query_scalar(
+                let doc: i64 = sqlx::query_scalar(
                 "SELECT COUNT(*) FROM documents WHERE database_name = ? AND collection_name = ?"
             )
             .bind(db).bind(col)
             .fetch_one(&pool).await.map_err(anyhow::Error::from)?;
 
-            let emb: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM chunks WHERE database_name = ? AND collection_name = ?"
-            )
-            .bind(db).bind(col)
-            .fetch_one(&pool).await.map_err(anyhow::Error::from)?;
+                let emb: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM chunks WHERE database_name = ? AND collection_name = ?",
+                )
+                .bind(db)
+                .bind(col)
+                .fetch_one(&pool)
+                .await
+                .map_err(anyhow::Error::from)?;
 
-            let node: i64 = sqlx::query_scalar(
+                let node: i64 = sqlx::query_scalar(
                 "SELECT COUNT(*) FROM graph_nodes WHERE database_name = ? AND collection_name = ?"
             )
             .bind(db).bind(col)
             .fetch_one(&pool).await.map_err(anyhow::Error::from)?;
 
-            (doc, emb, node)
-        }
-        _ => {
-            let doc: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM documents")
-                .fetch_one(&state.pool).await.map_err(anyhow::Error::from)?;
-            let emb: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM chunks")
-                .fetch_one(&state.pool).await.map_err(anyhow::Error::from)?;
-            let node: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM graph_nodes")
-                .fetch_one(&state.pool).await.map_err(anyhow::Error::from)?;
-            (doc, emb, node)
-        }
-    };
+                (doc, emb, node)
+            }
+            _ => {
+                let doc: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM documents")
+                    .fetch_one(&state.pool)
+                    .await
+                    .map_err(anyhow::Error::from)?;
+                let emb: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM chunks")
+                    .fetch_one(&state.pool)
+                    .await
+                    .map_err(anyhow::Error::from)?;
+                let node: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM graph_nodes")
+                    .fetch_one(&state.pool)
+                    .await
+                    .map_err(anyhow::Error::from)?;
+                (doc, emb, node)
+            }
+        };
 
     let edge_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM graph_edges")
-        .fetch_one(&state.pool).await.map_err(anyhow::Error::from)?;
+        .fetch_one(&state.pool)
+        .await
+        .map_err(anyhow::Error::from)?;
     let model_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM models")
-        .fetch_one(&state.pool).await.map_err(anyhow::Error::from)?;
+        .fetch_one(&state.pool)
+        .await
+        .map_err(anyhow::Error::from)?;
     let db_size: i64 = sqlx::query_scalar(
-        "SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()"
+        "SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()",
     )
-    .fetch_optional(&state.pool).await.map_err(anyhow::Error::from)?
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(anyhow::Error::from)?
     .unwrap_or(0);
 
     Ok(Json(Stats {

@@ -8,6 +8,55 @@ use crate::db::now_str;
 use crate::llm::LlmClient;
 use crate::types::{ChatCompletionRequest, ChatMessage, GraphEdge, GraphNode, GraphSearchResult};
 
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    #[tokio::test]
+    async fn bounded_cycles_remain_valid_and_fanout_or_foreign_seeds_fail_explicitly() {
+        let root = tempfile::tempdir().unwrap();
+        let mut config = crate::config::Config::default();
+        config.database.path = root.path().join("graph.db");
+        let pool = crate::db::connect(&config).await.unwrap();
+        let seed = GraphNode::new("seed");
+        create_node(&pool, &seed).await.unwrap();
+        for index in 0..127 {
+            let node = GraphNode::new(format!("neighbor-{index}"));
+            create_node(&pool, &node).await.unwrap();
+            create_edge(&pool, &GraphEdge::new(&seed.id, &node.id, "related"))
+                .await
+                .unwrap();
+        }
+        let graph = bfs_traverse(&pool, &seed.id, 2, None, "both", "default", "default")
+            .await
+            .unwrap();
+        assert_eq!(graph.nodes.len(), 128);
+        assert_eq!(graph.edges.len(), 127);
+        assert!(
+            bfs_traverse(&pool, &seed.id, 9, None, "both", "default", "default")
+                .await
+                .is_err()
+        );
+        assert!(
+            bfs_traverse(&pool, &seed.id, 1, None, "both", "other", "default")
+                .await
+                .is_err()
+        );
+        for index in 127..129 {
+            let node = GraphNode::new(format!("neighbor-{index}"));
+            create_node(&pool, &node).await.unwrap();
+            create_edge(&pool, &GraphEdge::new(&seed.id, &node.id, "related"))
+                .await
+                .unwrap();
+            assert!(
+                bfs_traverse(&pool, &seed.id, 1, None, "both", "default", "default")
+                    .await
+                    .is_err()
+            );
+        }
+        pool.close().await;
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct ExtractedEntity {
     name: String,
@@ -54,7 +103,11 @@ pub async fn extract_and_store_graph(
 
     let req = ChatCompletionRequest {
         model: chat_model.to_string(),
-        messages: vec![ChatMessage { role: "user".to_string(), content: prompt, name: None }],
+        messages: vec![ChatMessage {
+            role: "user".to_string(),
+            content: prompt,
+            name: None,
+        }],
         temperature: Some(0.1),
         max_tokens: Some(1024),
         stream: Some(false),
@@ -63,7 +116,11 @@ pub async fn extract_and_store_graph(
     };
 
     let resp = llm.chat(&req).await?;
-    let raw = resp.choices.first().map(|c| c.message.content.clone()).unwrap_or_default();
+    let raw = resp
+        .choices
+        .first()
+        .map(|c| c.message.content.clone())
+        .unwrap_or_default();
     let extraction = parse_extraction(&raw).unwrap_or_default();
 
     let mut entity_ids: HashMap<String, String> = HashMap::new();
@@ -72,7 +129,15 @@ pub async fn extract_and_store_graph(
         if label.is_empty() {
             continue;
         }
-        let id = upsert_entity(pool, label, e.r#type.as_deref(), document_id, database_name, collection_name).await?;
+        let id = upsert_entity(
+            pool,
+            label,
+            e.r#type.as_deref(),
+            document_id,
+            database_name,
+            collection_name,
+        )
+        .await?;
         entity_ids.insert(label.to_lowercase(), id);
     }
 
@@ -85,22 +150,38 @@ pub async fn extract_and_store_graph(
         }
         let source_id = match entity_ids.get(&src.to_lowercase()) {
             Some(id) => id.clone(),
-            None => upsert_entity(pool, src, None, document_id, database_name, collection_name).await?,
+            None => {
+                upsert_entity(pool, src, None, document_id, database_name, collection_name).await?
+            }
         };
         let target_id = match entity_ids.get(&tgt.to_lowercase()) {
             Some(id) => id.clone(),
-            None => upsert_entity(pool, tgt, None, document_id, database_name, collection_name).await?,
+            None => {
+                upsert_entity(pool, tgt, None, document_id, database_name, collection_name).await?
+            }
         };
-        let relation = r.relation.as_deref().unwrap_or("related_to").trim().to_string();
-        create_edge(pool, &GraphEdge {
-            id: Uuid::new_v4().to_string(),
-            source_id,
-            target_id,
-            relation: if relation.is_empty() { "related_to".to_string() } else { relation },
-            weight: 1.0,
-            properties: serde_json::Value::Object(Default::default()),
-            created_at: chrono::Utc::now(),
-        })
+        let relation = r
+            .relation
+            .as_deref()
+            .unwrap_or("related_to")
+            .trim()
+            .to_string();
+        create_edge(
+            pool,
+            &GraphEdge {
+                id: Uuid::new_v4().to_string(),
+                source_id,
+                target_id,
+                relation: if relation.is_empty() {
+                    "related_to".to_string()
+                } else {
+                    relation
+                },
+                weight: 1.0,
+                properties: serde_json::Value::Object(Default::default()),
+                created_at: chrono::Utc::now(),
+            },
+        )
         .await?;
         rel_count += 1;
     }
@@ -169,7 +250,15 @@ fn parse_node(
     }
 }
 
-fn parse_edge(id: String, source_id: String, target_id: String, relation: String, weight: f64, properties: String, created_at: String) -> GraphEdge {
+fn parse_edge(
+    id: String,
+    source_id: String,
+    target_id: String,
+    relation: String,
+    weight: f64,
+    properties: String,
+    created_at: String,
+) -> GraphEdge {
     GraphEdge {
         id,
         source_id,
@@ -219,7 +308,15 @@ pub async fn create_edge(pool: &SqlitePool, edge: &GraphEdge) -> Result<()> {
 
 pub async fn get_node(pool: &SqlitePool, node_id: &str) -> Result<Option<GraphNode>> {
     #[derive(sqlx::FromRow)]
-    struct Row { id: String, label: String, properties: String, document_id: Option<String>, database_name: String, collection_name: String, created_at: String }
+    struct Row {
+        id: String,
+        label: String,
+        properties: String,
+        document_id: Option<String>,
+        database_name: String,
+        collection_name: String,
+        created_at: String,
+    }
 
     let r: Option<Row> = sqlx::query_as(
         "SELECT id, label, properties, document_id, database_name, collection_name, created_at FROM graph_nodes WHERE id = ?"
@@ -228,7 +325,17 @@ pub async fn get_node(pool: &SqlitePool, node_id: &str) -> Result<Option<GraphNo
     .fetch_optional(pool)
     .await?;
 
-    Ok(r.map(|r| parse_node(r.id, r.label, r.properties, r.document_id, r.database_name, r.collection_name, r.created_at)))
+    Ok(r.map(|r| {
+        parse_node(
+            r.id,
+            r.label,
+            r.properties,
+            r.document_id,
+            r.database_name,
+            r.collection_name,
+            r.created_at,
+        )
+    }))
 }
 
 pub async fn find_nodes_by_label(
@@ -238,7 +345,15 @@ pub async fn find_nodes_by_label(
     collection_name: &str,
 ) -> Result<Vec<GraphNode>> {
     #[derive(sqlx::FromRow)]
-    struct Row { id: String, label: String, properties: String, document_id: Option<String>, database_name: String, collection_name: String, created_at: String }
+    struct Row {
+        id: String,
+        label: String,
+        properties: String,
+        document_id: Option<String>,
+        database_name: String,
+        collection_name: String,
+        created_at: String,
+    }
 
     let rows: Vec<Row> = sqlx::query_as(
         "SELECT id, label, properties, document_id, database_name, collection_name, created_at FROM graph_nodes WHERE label = ? AND database_name = ? AND collection_name = ?"
@@ -249,7 +364,20 @@ pub async fn find_nodes_by_label(
     .fetch_all(pool)
     .await?;
 
-    Ok(rows.into_iter().map(|r| parse_node(r.id, r.label, r.properties, r.document_id, r.database_name, r.collection_name, r.created_at)).collect())
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            parse_node(
+                r.id,
+                r.label,
+                r.properties,
+                r.document_id,
+                r.database_name,
+                r.collection_name,
+                r.created_at,
+            )
+        })
+        .collect())
 }
 
 pub async fn delete_node(pool: &SqlitePool, node_id: &str) -> Result<bool> {
@@ -257,7 +385,8 @@ pub async fn delete_node(pool: &SqlitePool, node_id: &str) -> Result<bool> {
         .bind(node_id)
         .execute(pool)
         .await?
-        .rows_affected() > 0)
+        .rows_affected()
+        > 0)
 }
 
 pub async fn delete_edge(pool: &SqlitePool, edge_id: &str) -> Result<bool> {
@@ -265,7 +394,8 @@ pub async fn delete_edge(pool: &SqlitePool, edge_id: &str) -> Result<bool> {
         .bind(edge_id)
         .execute(pool)
         .await?
-        .rows_affected() > 0)
+        .rows_affected()
+        > 0)
 }
 
 pub async fn get_neighbors(
@@ -278,9 +408,20 @@ pub async fn get_neighbors(
 ) -> Result<Vec<(GraphNode, GraphEdge)>> {
     #[derive(sqlx::FromRow)]
     struct Row {
-        nid: String, label: String, properties: String, document_id: Option<String>,
-        ndatabase: String, ncollection: String, created_at: String,
-        eid: String, source_id: String, target_id: String, relation: String, weight: f64, eprops: String, ecreated: String,
+        nid: String,
+        label: String,
+        properties: String,
+        document_id: Option<String>,
+        ndatabase: String,
+        ncollection: String,
+        created_at: String,
+        eid: String,
+        source_id: String,
+        target_id: String,
+        relation: String,
+        weight: f64,
+        eprops: String,
+        ecreated: String,
     }
 
     let rows: Vec<Row> = match (direction, relation) {
@@ -288,21 +429,21 @@ pub async fn get_neighbors(
             "SELECT n.id as nid, n.label, n.properties, n.document_id, n.database_name as ndatabase, n.collection_name as ncollection, n.created_at,
                     e.id as eid, e.source_id, e.target_id, e.relation, e.weight, e.properties as eprops, e.created_at as ecreated
              FROM graph_edges e JOIN graph_nodes n ON e.target_id = n.id
-             WHERE e.source_id = ? AND e.relation = ? AND n.database_name = ? AND n.collection_name = ?"
+             WHERE e.source_id = ? AND e.relation = ? AND n.database_name = ? AND n.collection_name = ? LIMIT 129"
         ).bind(node_id).bind(rel).bind(database_name).bind(collection_name).fetch_all(pool).await?,
 
         ("out", None) => sqlx::query_as(
             "SELECT n.id as nid, n.label, n.properties, n.document_id, n.database_name as ndatabase, n.collection_name as ncollection, n.created_at,
                     e.id as eid, e.source_id, e.target_id, e.relation, e.weight, e.properties as eprops, e.created_at as ecreated
              FROM graph_edges e JOIN graph_nodes n ON e.target_id = n.id
-             WHERE e.source_id = ? AND n.database_name = ? AND n.collection_name = ?"
+             WHERE e.source_id = ? AND n.database_name = ? AND n.collection_name = ? LIMIT 129"
         ).bind(node_id).bind(database_name).bind(collection_name).fetch_all(pool).await?,
 
         ("in", Some(rel)) => sqlx::query_as(
             "SELECT n.id as nid, n.label, n.properties, n.document_id, n.database_name as ndatabase, n.collection_name as ncollection, n.created_at,
                     e.id as eid, e.source_id, e.target_id, e.relation, e.weight, e.properties as eprops, e.created_at as ecreated
              FROM graph_edges e JOIN graph_nodes n ON e.source_id = n.id
-             WHERE e.target_id = ? AND e.relation = ? AND n.database_name = ? AND n.collection_name = ?"
+             WHERE e.target_id = ? AND e.relation = ? AND n.database_name = ? AND n.collection_name = ? LIMIT 129"
         ).bind(node_id).bind(rel).bind(database_name).bind(collection_name).fetch_all(pool).await?,
 
         _ => sqlx::query_as(
@@ -310,16 +451,35 @@ pub async fn get_neighbors(
                     e.id as eid, e.source_id, e.target_id, e.relation, e.weight, e.properties as eprops, e.created_at as ecreated
              FROM graph_edges e JOIN graph_nodes n ON (e.target_id = n.id AND e.source_id = ?)
                                                    OR (e.source_id = n.id AND e.target_id = ?)
-             WHERE n.database_name = ? AND n.collection_name = ?"
+             WHERE n.database_name = ? AND n.collection_name = ? LIMIT 129"
         ).bind(node_id).bind(node_id).bind(database_name).bind(collection_name).fetch_all(pool).await?,
     };
 
+    anyhow::ensure!(rows.len() <= 128, "Graph adjacency exceeds work budget");
     Ok(rows
         .into_iter()
-        .map(|r| (
-            parse_node(r.nid, r.label, r.properties, r.document_id, r.ndatabase, r.ncollection, r.created_at),
-            parse_edge(r.eid, r.source_id, r.target_id, r.relation, r.weight, r.eprops, r.ecreated),
-        ))
+        .map(|r| {
+            (
+                parse_node(
+                    r.nid,
+                    r.label,
+                    r.properties,
+                    r.document_id,
+                    r.ndatabase,
+                    r.ncollection,
+                    r.created_at,
+                ),
+                parse_edge(
+                    r.eid,
+                    r.source_id,
+                    r.target_id,
+                    r.relation,
+                    r.weight,
+                    r.eprops,
+                    r.ecreated,
+                ),
+            )
+        })
         .collect())
 }
 
@@ -332,22 +492,47 @@ pub async fn bfs_traverse(
     database_name: &str,
     collection_name: &str,
 ) -> Result<GraphSearchResult> {
+    anyhow::ensure!(max_depth <= 8, "Graph depth exceeds work budget");
     let mut visited_nodes: HashMap<String, GraphNode> = HashMap::new();
     let mut visited_edges: HashMap<String, GraphEdge> = HashMap::new();
     let mut queue: VecDeque<(String, usize)> = VecDeque::new();
     let mut seen: HashSet<String> = HashSet::new();
 
     if let Some(start) = get_node(pool, start_node_id).await? {
+        anyhow::ensure!(
+            start.database_name == database_name && start.collection_name == collection_name,
+            "Graph start is outside requested scope"
+        );
         seen.insert(start.id.clone());
         queue.push_back((start.id.clone(), 0));
         visited_nodes.insert(start.id.clone(), start);
     } else {
-        return Ok(GraphSearchResult { nodes: vec![], edges: vec![], documents: vec![] });
+        return Ok(GraphSearchResult {
+            nodes: vec![],
+            edges: vec![],
+            documents: vec![],
+        });
     }
 
     while let Some((node_id, depth)) = queue.pop_front() {
-        if depth >= max_depth { continue; }
-        for (neighbor, edge) in get_neighbors(pool, &node_id, relation, direction, database_name, collection_name).await? {
+        if depth >= max_depth {
+            continue;
+        }
+        for (neighbor, edge) in get_neighbors(
+            pool,
+            &node_id,
+            relation,
+            direction,
+            database_name,
+            collection_name,
+        )
+        .await?
+        {
+            anyhow::ensure!(
+                (visited_edges.contains_key(&edge.id) || visited_edges.len() < 512)
+                    && (seen.contains(&neighbor.id) || seen.len() < 128),
+                "Graph traversal exceeds work budget"
+            );
             visited_edges.entry(edge.id.clone()).or_insert(edge);
             if !seen.contains(&neighbor.id) {
                 seen.insert(neighbor.id.clone());
@@ -357,7 +542,8 @@ pub async fn bfs_traverse(
         }
     }
 
-    let doc_ids: Vec<String> = visited_nodes.values()
+    let doc_ids: Vec<String> = visited_nodes
+        .values()
         .filter_map(|n| n.document_id.clone())
         .collect::<HashSet<_>>()
         .into_iter()
@@ -385,34 +571,76 @@ pub async fn list_nodes(
     collection_name: &str,
 ) -> Result<Vec<GraphNode>> {
     #[derive(sqlx::FromRow)]
-    struct Row { id: String, label: String, properties: String, document_id: Option<String>, database_name: String, collection_name: String, created_at: String }
+    struct Row {
+        id: String,
+        label: String,
+        properties: String,
+        document_id: Option<String>,
+        database_name: String,
+        collection_name: String,
+        created_at: String,
+    }
 
     let rows: Vec<Row> = sqlx::query_as(
         "SELECT id, label, properties, document_id, database_name, collection_name, created_at FROM graph_nodes WHERE database_name = ? AND collection_name = ? ORDER BY created_at DESC LIMIT ? OFFSET ?"
     )
     .bind(database_name)
     .bind(collection_name)
-    .bind(limit)
-    .bind(offset)
+    .bind(limit.clamp(1, 100))
+    .bind(offset.max(0))
     .fetch_all(pool)
     .await?;
 
-    Ok(rows.into_iter().map(|r| parse_node(r.id, r.label, r.properties, r.document_id, r.database_name, r.collection_name, r.created_at)).collect())
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            parse_node(
+                r.id,
+                r.label,
+                r.properties,
+                r.document_id,
+                r.database_name,
+                r.collection_name,
+                r.created_at,
+            )
+        })
+        .collect())
 }
 
 pub async fn list_edges(pool: &SqlitePool, limit: i64, offset: i64) -> Result<Vec<GraphEdge>> {
     #[derive(sqlx::FromRow)]
-    struct Row { id: String, source_id: String, target_id: String, relation: String, weight: f64, properties: String, created_at: String }
+    struct Row {
+        id: String,
+        source_id: String,
+        target_id: String,
+        relation: String,
+        weight: f64,
+        properties: String,
+        created_at: String,
+    }
 
     let rows: Vec<Row> = sqlx::query_as(
         "SELECT id, source_id, target_id, relation, weight, properties, created_at FROM graph_edges ORDER BY created_at DESC LIMIT ? OFFSET ?"
     )
-    .bind(limit)
-    .bind(offset)
+    .bind(limit.clamp(1, 100))
+    .bind(offset.max(0))
     .fetch_all(pool)
     .await?;
 
-    Ok(rows.into_iter().map(|r| parse_edge(r.id, r.source_id, r.target_id, r.relation, r.weight, r.properties, r.created_at)).collect())
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            parse_edge(
+                r.id,
+                r.source_id,
+                r.target_id,
+                r.relation,
+                r.weight,
+                r.properties,
+                r.created_at,
+            )
+        })
+        .collect())
 }
 
 pub async fn list_edges_in_collection(
@@ -423,21 +651,42 @@ pub async fn list_edges_in_collection(
     collection_name: &str,
 ) -> Result<Vec<GraphEdge>> {
     #[derive(sqlx::FromRow)]
-    struct Row { id: String, source_id: String, target_id: String, relation: String, weight: f64, properties: String, created_at: String }
+    struct Row {
+        id: String,
+        source_id: String,
+        target_id: String,
+        relation: String,
+        weight: f64,
+        properties: String,
+        created_at: String,
+    }
 
     let rows: Vec<Row> = sqlx::query_as(
         "SELECT e.id, e.source_id, e.target_id, e.relation, e.weight, e.properties, e.created_at
          FROM graph_edges e
          JOIN graph_nodes n ON e.source_id = n.id
          WHERE n.database_name = ? AND n.collection_name = ?
-         ORDER BY e.created_at DESC LIMIT ? OFFSET ?"
+         ORDER BY e.created_at DESC LIMIT ? OFFSET ?",
     )
     .bind(database_name)
     .bind(collection_name)
-    .bind(limit)
-    .bind(offset)
+    .bind(limit.clamp(1, 100))
+    .bind(offset.max(0))
     .fetch_all(pool)
     .await?;
 
-    Ok(rows.into_iter().map(|r| parse_edge(r.id, r.source_id, r.target_id, r.relation, r.weight, r.properties, r.created_at)).collect())
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            parse_edge(
+                r.id,
+                r.source_id,
+                r.target_id,
+                r.relation,
+                r.weight,
+                r.properties,
+                r.created_at,
+            )
+        })
+        .collect())
 }

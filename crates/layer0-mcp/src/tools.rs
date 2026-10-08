@@ -6,15 +6,15 @@ const MAX_DB_POOLS: usize = 64;
 use layer0_core::{
     config::Config,
     database::{
-        create_collection, create_database, delete_collection, delete_database,
-        ensure_collection, list_collections, list_databases,
+        create_collection, create_database, delete_collection, delete_database, ensure_collection,
+        list_collections, list_databases,
     },
     db::{connect, connect_database},
     embedding::embed_document,
     graph::bfs_traverse,
-    retrieval::{retrieve, RagMode},
     llm::LlmClient,
     rag::rag_query,
+    retrieval::{retrieve, RagMode},
     types::RagRequest,
 };
 use serde_json::Value;
@@ -34,7 +34,12 @@ impl ToolContext {
     pub async fn new(config: Config) -> Result<Self> {
         let pool = connect(&config).await?;
         let llm = LlmClient::new(&config.llm, &config.effective_chat())?;
-        Ok(Self { pool, config, llm, db_pools: Mutex::new(HashMap::new()) })
+        Ok(Self {
+            pool,
+            config,
+            llm,
+            db_pools: Mutex::new(HashMap::new()),
+        })
     }
 
     pub async fn pool_for(&self, database: &str) -> Result<SqlitePool> {
@@ -44,6 +49,12 @@ impl ToolContext {
         // Validate before any path construction or FS access.
         layer0_core::database::validate_name_pub(database)?;
         let mut guard = self.db_pools.lock().await;
+        anyhow::ensure!(
+            layer0_core::database::get_database(&self.pool, database)
+                .await?
+                .is_some(),
+            "Database does not exist"
+        );
         if let Some(p) = guard.get(database) {
             return Ok(p.clone());
         }
@@ -68,7 +79,14 @@ fn get_col(args: &Value) -> &str {
 }
 
 pub async fn store_memory(ctx: &ToolContext, args: &Value) -> Result<Value> {
-    let content = args["content"].as_str().ok_or_else(|| anyhow::anyhow!("content required"))?;
+    let content = args["content"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("content required"))?;
+    layer0_core::chunk::validate_content(
+        content,
+        ctx.config.chunking.chunk_size,
+        ctx.config.chunking.chunk_overlap,
+    )?;
     let source = args["source"].as_str().map(String::from);
     let metadata = args.get("metadata").cloned().unwrap_or_default();
     let meta_str = serde_json::to_string(&metadata)?;
@@ -96,9 +114,15 @@ pub async fn store_memory(ctx: &ToolContext, args: &Value) -> Result<Value> {
     .await?;
 
     if let Err(e) = embed_document(
-        &pool, &ctx.llm, &id, content, &ctx.config.llm.embedding_model,
-        database, collection,
-        ctx.config.chunking.chunk_size, ctx.config.chunking.chunk_overlap,
+        &pool,
+        &ctx.llm,
+        &id,
+        content,
+        &ctx.config.llm.embedding_model,
+        database,
+        collection,
+        ctx.config.chunking.chunk_size,
+        ctx.config.chunking.chunk_overlap,
     )
     .await
     {
@@ -108,7 +132,13 @@ pub async fn store_memory(ctx: &ToolContext, args: &Value) -> Result<Value> {
     if ctx.config.rag.extract_graph && ctx.config.rag.mode != "vector" {
         let chat_model = ctx.config.effective_chat().model;
         if let Err(e) = layer0_core::graph::extract_and_store_graph(
-            &pool, &ctx.llm, &chat_model, &id, content, database, collection,
+            &pool,
+            &ctx.llm,
+            &chat_model,
+            &id,
+            content,
+            database,
+            collection,
         )
         .await
         {
@@ -116,11 +146,15 @@ pub async fn store_memory(ctx: &ToolContext, args: &Value) -> Result<Value> {
         }
     }
 
-    Ok(serde_json::json!({ "id": id, "stored": true, "database": database, "collection": collection }))
+    Ok(
+        serde_json::json!({ "id": id, "stored": true, "database": database, "collection": collection }),
+    )
 }
 
 pub async fn search_memory(ctx: &ToolContext, args: &Value) -> Result<Value> {
-    let query = args["query"].as_str().ok_or_else(|| anyhow::anyhow!("query required"))?;
+    let query = args["query"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("query required"))?;
     let limit = args["limit"].as_u64().unwrap_or(5) as usize;
     let database = get_db(args);
     let collection = get_col(args);
@@ -128,8 +162,15 @@ pub async fn search_memory(ctx: &ToolContext, args: &Value) -> Result<Value> {
     let pool = ctx.pool_for(database).await?;
     let mode = RagMode::parse(&ctx.config.rag.mode);
     let results = retrieve(
-        &pool, &ctx.llm, query, &ctx.config.llm.embedding_model, limit, mode,
-        ctx.config.rag.rerank, database, collection,
+        &pool,
+        &ctx.llm,
+        query,
+        &ctx.config.llm.embedding_model,
+        limit,
+        mode,
+        ctx.config.rag.rerank,
+        database,
+        collection,
     )
     .await?;
 
@@ -149,7 +190,9 @@ pub async fn search_memory(ctx: &ToolContext, args: &Value) -> Result<Value> {
 }
 
 pub async fn rag_tool(ctx: &ToolContext, args: &Value) -> Result<Value> {
-    let query = args["query"].as_str().ok_or_else(|| anyhow::anyhow!("query required"))?;
+    let query = args["query"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("query required"))?;
     let limit = args["limit"].as_u64().unwrap_or(5) as usize;
     let system_prompt = args["system_prompt"].as_str().map(String::from);
     let database = get_db(args).to_string();
@@ -157,7 +200,8 @@ pub async fn rag_tool(ctx: &ToolContext, args: &Value) -> Result<Value> {
 
     let pool = ctx.pool_for(&database).await?;
     let resp = rag_query(
-        &pool, &ctx.llm,
+        &pool,
+        &ctx.llm,
         &RagRequest {
             query: query.to_string(),
             limit,
@@ -189,7 +233,9 @@ pub async fn rag_tool(ctx: &ToolContext, args: &Value) -> Result<Value> {
 }
 
 pub async fn get_document_tool(ctx: &ToolContext, args: &Value) -> Result<Value> {
-    let id = args["id"].as_str().ok_or_else(|| anyhow::anyhow!("id required"))?;
+    let id = args["id"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("id required"))?;
 
     #[derive(sqlx::FromRow)]
     struct Row {
@@ -223,7 +269,9 @@ pub async fn get_document_tool(ctx: &ToolContext, args: &Value) -> Result<Value>
 }
 
 pub async fn delete_memory_tool(ctx: &ToolContext, args: &Value) -> Result<Value> {
-    let id = args["id"].as_str().ok_or_else(|| anyhow::anyhow!("id required"))?;
+    let id = args["id"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("id required"))?;
     layer0_core::embedding::purge_document_vectors(&ctx.pool, id).await?;
     let r = sqlx::query("DELETE FROM documents WHERE id = ?")
         .bind(id)
@@ -256,7 +304,10 @@ pub async fn graph_query_tool(ctx: &ToolContext, args: &Value) -> Result<Value> 
 
     let depth = args["depth"].as_u64().unwrap_or(2) as usize;
     let relation = args["relation"].as_str();
-    let result = bfs_traverse(&pool, &start_id, depth, relation, "both", database, collection).await?;
+    let result = bfs_traverse(
+        &pool, &start_id, depth, relation, "both", database, collection,
+    )
+    .await?;
 
     Ok(serde_json::json!({
         "nodes": result.nodes.len(),
@@ -275,23 +326,43 @@ pub async fn memory_stats_tool(ctx: &ToolContext, args: &Value) -> Result<Value>
     let pool = ctx.pool_for(database).await?;
     let (docs, embs, nodes) = if scoped {
         let d: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM documents WHERE database_name = ? AND collection_name = ?"
-        ).bind(database).bind(collection).fetch_one(&pool).await?;
+            "SELECT COUNT(*) FROM documents WHERE database_name = ? AND collection_name = ?",
+        )
+        .bind(database)
+        .bind(collection)
+        .fetch_one(&pool)
+        .await?;
         let e: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM chunks WHERE database_name = ? AND collection_name = ?"
-        ).bind(database).bind(collection).fetch_one(&pool).await?;
+            "SELECT COUNT(*) FROM chunks WHERE database_name = ? AND collection_name = ?",
+        )
+        .bind(database)
+        .bind(collection)
+        .fetch_one(&pool)
+        .await?;
         let n: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM graph_nodes WHERE database_name = ? AND collection_name = ?"
-        ).bind(database).bind(collection).fetch_one(&pool).await?;
+            "SELECT COUNT(*) FROM graph_nodes WHERE database_name = ? AND collection_name = ?",
+        )
+        .bind(database)
+        .bind(collection)
+        .fetch_one(&pool)
+        .await?;
         (d, e, n)
     } else {
-        let d: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM documents").fetch_one(&pool).await?;
-        let e: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM chunks").fetch_one(&pool).await?;
-        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM graph_nodes").fetch_one(&pool).await?;
+        let d: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM documents")
+            .fetch_one(&pool)
+            .await?;
+        let e: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM chunks")
+            .fetch_one(&pool)
+            .await?;
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM graph_nodes")
+            .fetch_one(&pool)
+            .await?;
         (d, e, n)
     };
 
-    let edges: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM graph_edges").fetch_one(&pool).await?;
+    let edges: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM graph_edges")
+        .fetch_one(&pool)
+        .await?;
     let chat = ctx.config.effective_chat();
 
     Ok(serde_json::json!({
@@ -318,14 +389,26 @@ pub async fn list_databases_tool(ctx: &ToolContext, _args: &Value) -> Result<Val
 }
 
 pub async fn create_database_tool(ctx: &ToolContext, args: &Value) -> Result<Value> {
-    let name = args["name"].as_str().ok_or_else(|| anyhow::anyhow!("name required"))?;
+    let name = args["name"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("name required"))?;
     let description = args["description"].as_str().map(String::from);
     let db = create_database(&ctx.pool, &ctx.config, name, description.as_deref()).await?;
-    Ok(serde_json::json!({ "name": db.name, "description": db.description, "created_at": db.created_at }))
+    Ok(
+        serde_json::json!({ "name": db.name, "description": db.description, "created_at": db.created_at }),
+    )
 }
 
 pub async fn delete_database_tool(ctx: &ToolContext, args: &Value) -> Result<Value> {
-    let name = args["name"].as_str().ok_or_else(|| anyhow::anyhow!("name required"))?;
+    let name = args["name"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("name required"))?;
+    layer0_core::database::validate_name_pub(name)?;
+    anyhow::ensure!(name != "default", "Cannot delete default database");
+    let mut pools = ctx.db_pools.lock().await;
+    if let Some(pool) = pools.remove(name) {
+        pool.close().await;
+    }
     let deleted = delete_database(&ctx.pool, &ctx.config, name).await?;
     Ok(serde_json::json!({ "deleted": deleted, "name": name }))
 }
@@ -346,17 +429,30 @@ pub async fn list_collections_tool(ctx: &ToolContext, args: &Value) -> Result<Va
 
 pub async fn create_collection_tool(ctx: &ToolContext, args: &Value) -> Result<Value> {
     let database = get_db(args);
-    let name = args["name"].as_str().ok_or_else(|| anyhow::anyhow!("name required"))?;
+    let name = args["name"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("name required"))?;
     let description = args["description"].as_str().map(String::from);
     let pool = ctx.pool_for(database).await?;
     let col = create_collection(&pool, database, name, description.as_deref()).await?;
-    Ok(serde_json::json!({ "database": col.database_name, "name": col.name, "description": col.description, "created_at": col.created_at }))
+    Ok(
+        serde_json::json!({ "database": col.database_name, "name": col.name, "description": col.description, "created_at": col.created_at }),
+    )
 }
 
 pub async fn delete_collection_tool(ctx: &ToolContext, args: &Value) -> Result<Value> {
     let database = get_db(args);
-    let name = args["name"].as_str().ok_or_else(|| anyhow::anyhow!("name required"))?;
+    let name = args["name"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("name required"))?;
     let pool = ctx.pool_for(database).await?;
     let deleted = delete_collection(&pool, database, name).await?;
+    if database != "default" {
+        sqlx::query("DELETE FROM collections WHERE database_name = ? AND name = ?")
+            .bind(database)
+            .bind(name)
+            .execute(&ctx.pool)
+            .await?;
+    }
     Ok(serde_json::json!({ "deleted": deleted, "database": database, "name": name }))
 }

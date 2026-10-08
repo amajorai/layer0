@@ -3,7 +3,11 @@ mod routes;
 mod state;
 
 use anyhow::Result;
-use axum::{http::Method, routing::{delete, get, post}, Router};
+use axum::{
+    http::Method,
+    routing::{delete, get, post},
+    Router,
+};
 use clap::Parser;
 use layer0_core::{config::Config, db::connect, llm::LlmClient};
 use std::path::PathBuf;
@@ -31,22 +35,34 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::registry()
-        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| "layer0=info,tower_http=warn".into()))
+        .with(
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "layer0=info,tower_http=warn".into()),
+        )
         .with(tracing_subscriber::fmt::layer())
         .init();
 
     let args = Args::parse();
     let mut config = Config::load(args.config.as_ref())?;
-    if let Some(h) = args.host { config.server.host = h; }
-    if let Some(p) = args.port { config.server.port = p; }
-    if let Some(u) = args.llm_url { config.llm.base_url = u; }
+    if let Some(h) = args.host {
+        config.server.host = h;
+    }
+    if let Some(p) = args.port {
+        config.server.port = p;
+    }
+    if let Some(u) = args.llm_url {
+        config.llm.base_url = u;
+    }
 
     // Frictionless bootstrap: install llama.cpp, fetch the default model, start
     // the embeddings sidecar. The guard kills the managed child on shutdown.
     let _llama_guard = match layer0_core::installer::ensure_ready(&config).await {
         Ok(guard) => guard,
         Err(e) => {
-            tracing::warn!("auto-start failed ({}). Local models may be unavailable.", e);
+            tracing::warn!(
+                "auto-start failed ({}). Local models may be unavailable.",
+                e
+            );
             Vec::new()
         }
     };
@@ -62,7 +78,10 @@ async fn main() -> Result<()> {
         }
     } else if config.update.auto_check {
         if let Ok(Some(v)) = layer0_core::updater::check_latest(&config.update).await {
-            tracing::warn!("a newer layer0 release is available: {} (run `layer0 update`)", v);
+            tracing::warn!(
+                "a newer layer0 release is available: {} (run `layer0 update`)",
+                v
+            );
         }
     }
 
@@ -82,70 +101,143 @@ async fn main() -> Result<()> {
     let addr = format!("{}:{}", config.server.host, config.server.port);
 
     let cors = CorsLayer::new()
-        .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::PUT, Method::OPTIONS])
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::DELETE,
+            Method::PUT,
+            Method::OPTIONS,
+        ])
         .allow_headers(Any)
-        .allow_origin(Any);
+        .allow_origin(if config.server.cors_origins == ["*"] {
+            tower_http::cors::AllowOrigin::any()
+        } else {
+            anyhow::ensure!(
+                !config
+                    .server
+                    .cors_origins
+                    .iter()
+                    .any(|origin| origin == "*"),
+                "Wildcard CORS origin must stand alone"
+            );
+            let origins = config
+                .server
+                .cors_origins
+                .iter()
+                .map(|origin| origin.parse::<axum::http::HeaderValue>())
+                .collect::<Result<Vec<_>, _>>()?;
+            tower_http::cors::AllowOrigin::list(origins)
+        });
 
     let app = Router::new()
         // Health
-        .route("/health", get(|| async { axum::Json(serde_json::json!({ "status": "ok", "service": "layer0" })) }))
-
+        .route(
+            "/health",
+            get(|| async {
+                axum::Json(serde_json::json!({ "status": "ok", "service": "layer0" }))
+            }),
+        )
         // Global stats (all databases)
         .route("/v1/stats", get(documents::get_stats))
-
         // Global document routes (default database/collection)
-        .route("/v1/documents", post(documents::create_document).get(documents::list_documents))
-        .route("/v1/documents/:id", get(documents::get_document).delete(documents::delete_document))
-
+        .route(
+            "/v1/documents",
+            post(documents::create_document).get(documents::list_documents),
+        )
+        .route(
+            "/v1/documents/:id",
+            get(documents::get_document).delete(documents::delete_document),
+        )
         // Global search/rag (default database/collection)
         .route("/v1/search", post(search::search))
         .route("/v1/rag", post(search::rag))
-
         // Global graph routes (default database/collection)
-        .route("/v1/graph/nodes", post(graph::create_node_route).get(graph::list_nodes_route))
-        .route("/v1/graph/nodes/:id", get(graph::get_node_route).delete(graph::delete_node_route))
-        .route("/v1/graph/edges", post(graph::create_edge_route).get(graph::list_edges_route))
+        .route(
+            "/v1/graph/nodes",
+            post(graph::create_node_route).get(graph::list_nodes_route),
+        )
+        .route(
+            "/v1/graph/nodes/:id",
+            get(graph::get_node_route).delete(graph::delete_node_route),
+        )
+        .route(
+            "/v1/graph/edges",
+            post(graph::create_edge_route).get(graph::list_edges_route),
+        )
         .route("/v1/graph/edges/:id", delete(graph::delete_edge_route))
         .route("/v1/graph/query", post(graph::query_graph))
-
         // Database management
-        .route("/v1/db", get(databases::list_databases_route).post(databases::create_database_route))
-        .route("/v1/db/:database", get(databases::get_database_route).delete(databases::delete_database_route))
-
+        .route(
+            "/v1/db",
+            get(databases::list_databases_route).post(databases::create_database_route),
+        )
+        .route(
+            "/v1/db/:database",
+            get(databases::get_database_route).delete(databases::delete_database_route),
+        )
         // Collection management
-        .route("/v1/db/:database/collections", get(databases::list_collections_route).post(databases::create_collection_route))
-        .route("/v1/db/:database/:collection", get(databases::get_collection_route).delete(databases::delete_collection_route))
-
+        .route(
+            "/v1/db/:database/collections",
+            get(databases::list_collections_route).post(databases::create_collection_route),
+        )
+        .route(
+            "/v1/db/:database/:collection",
+            get(databases::get_collection_route).delete(databases::delete_collection_route),
+        )
         // Scoped document routes
-        .route("/v1/db/:database/:collection/documents", post(documents::create_document_scoped).get(documents::list_documents_scoped))
-        .route("/v1/db/:database/:collection/documents/:id", get(documents::get_document).delete(documents::delete_document))
-
+        .route(
+            "/v1/db/:database/:collection/documents",
+            post(documents::create_document_scoped).get(documents::list_documents_scoped),
+        )
+        .route(
+            "/v1/db/:database/:collection/documents/:id",
+            get(documents::get_document).delete(documents::delete_document),
+        )
         // Scoped search & RAG
-        .route("/v1/db/:database/:collection/search", post(search::search_scoped))
+        .route(
+            "/v1/db/:database/:collection/search",
+            post(search::search_scoped),
+        )
         .route("/v1/db/:database/:collection/rag", post(search::rag_scoped))
-
         // Scoped graph routes
-        .route("/v1/db/:database/:collection/graph/nodes", post(graph::create_node_scoped).get(graph::list_nodes_scoped))
-        .route("/v1/db/:database/:collection/graph/nodes/:id", get(graph::get_node_route).delete(graph::delete_node_route))
-        .route("/v1/db/:database/:collection/graph/edges", post(graph::create_edge_route).get(graph::list_edges_scoped))
-        .route("/v1/db/:database/:collection/graph/edges/:id", delete(graph::delete_edge_route))
-        .route("/v1/db/:database/:collection/graph/query", post(graph::query_graph_scoped))
-
+        .route(
+            "/v1/db/:database/:collection/graph/nodes",
+            post(graph::create_node_scoped).get(graph::list_nodes_scoped),
+        )
+        .route(
+            "/v1/db/:database/:collection/graph/nodes/:id",
+            get(graph::get_node_route).delete(graph::delete_node_route),
+        )
+        .route(
+            "/v1/db/:database/:collection/graph/edges",
+            post(graph::create_edge_route).get(graph::list_edges_scoped),
+        )
+        .route(
+            "/v1/db/:database/:collection/graph/edges/:id",
+            delete(graph::delete_edge_route),
+        )
+        .route(
+            "/v1/db/:database/:collection/graph/query",
+            post(graph::query_graph_scoped),
+        )
         // Scoped stats
-        .route("/v1/db/:database/:collection/stats", get(documents::get_stats_scoped))
-
+        .route(
+            "/v1/db/:database/:collection/stats",
+            get(documents::get_stats_scoped),
+        )
         // OpenAI-compatible endpoints (global)
         .route("/v1/embeddings", post(embeddings::create_embeddings))
         .route("/v1/chat/completions", post(chat::chat_completions))
-
         // Model management
         .route("/v1/models", get(models::list_models))
         .route("/v1/models/download", post(models::download_model))
         .route("/v1/models/install-llama", post(models::install_llama))
         .route("/v1/models/:name", delete(models::delete_model))
-
         .with_state(state.clone())
-        .layer(axum::middleware::from_fn_with_state(state, auth::require_api_key))
+        .layer(axum::middleware::from_fn_with_state(
+            state,
+            auth::require_api_key,
+        ))
         .layer(cors)
         .layer(TraceLayer::new_for_http());
 
