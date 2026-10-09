@@ -57,8 +57,18 @@ mod tests {
             .unwrap();
         assert!(!state.pool_for("shared").await.unwrap().is_closed());
         state.delete_database("shared").await.unwrap();
+        drop(opened);
         state.pool.close().await;
-        std::fs::remove_dir_all(root).unwrap();
+        drop(state);
+        for attempt in 1..=20 {
+            match std::fs::remove_dir_all(&root) {
+                Ok(()) => break,
+                Err(_) if cfg!(windows) && attempt < 20 => {
+                    tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+                }
+                Err(error) => panic!("failed to remove test database directory: {error}"),
+            }
+        }
     }
 }
 
