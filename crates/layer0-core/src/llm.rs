@@ -44,11 +44,18 @@ impl LlmClient {
     }
 
     pub async fn embed(&self, texts: &[&str], model: &str) -> Result<Vec<Vec<f32>>> {
-        let input = if texts.len() == 1 { json!(texts[0]) } else { json!(texts) };
+        let input = if texts.len() == 1 {
+            json!(texts[0])
+        } else {
+            json!(texts)
+        };
         let body = json!({ "model": model, "input": input });
         debug!("embedding {} texts with model {}", texts.len(), model);
 
-        let mut req = self.client.post(format!("{}/v1/embeddings", self.base_url)).json(&body);
+        let mut req = self
+            .client
+            .post(format!("{}/v1/embeddings", self.base_url))
+            .json(&body);
         if let Some(auth) = self.auth_header() {
             req = req.header("Authorization", auth);
         }
@@ -61,15 +68,20 @@ impl LlmClient {
         }
 
         let data: EmbeddingResponse = resp.json().await?;
-        let mut result: Vec<(usize, Vec<f32>)> =
-            data.data.into_iter().map(|d| (d.index, d.embedding)).collect();
+        let mut result: Vec<(usize, Vec<f32>)> = data
+            .data
+            .into_iter()
+            .map(|d| (d.index, d.embedding))
+            .collect();
         result.sort_by_key(|(i, _)| *i);
         Ok(result.into_iter().map(|(_, e)| e).collect())
     }
 
     pub async fn embed_one(&self, text: &str, model: &str) -> Result<Vec<f32>> {
         let mut results = self.embed(&[text], model).await?;
-        results.pop().ok_or_else(|| anyhow!("no embedding returned"))
+        results
+            .pop()
+            .ok_or_else(|| anyhow!("no embedding returned"))
     }
 
     pub async fn chat(&self, request: &ChatCompletionRequest) -> Result<ChatCompletionResponse> {

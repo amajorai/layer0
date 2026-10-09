@@ -1,4 +1,7 @@
-use axum::{extract::{Path, State}, Json};
+use axum::{
+    extract::{Path, State},
+    Json,
+};
 use layer0_core::{
     installer::{download_hf_model, install_llama_cpp, list_installed_models},
     types::{DownloadModelRequest, ModelInfo},
@@ -26,21 +29,29 @@ pub async fn list_models(State(state): State<AppState>) -> ApiResult<Json<serde_
     .await
     .map_err(anyhow::Error::from)?;
 
-    let db_models: Vec<ModelInfo> = rows.into_iter().map(|r| ModelInfo {
-        name: r.name,
-        model_type: r.model_type,
-        path: r.path,
-        context_length: r.context_length,
-        dimensions: r.dimensions,
-        metadata: serde_json::from_str(&r.metadata).unwrap_or_default(),
-        created_at: layer0_core::db::parse_dt(&r.created_at),
-    }).collect();
+    let db_models: Vec<ModelInfo> = rows
+        .into_iter()
+        .map(|r| ModelInfo {
+            name: r.name,
+            model_type: r.model_type,
+            path: r.path,
+            context_length: r.context_length,
+            dimensions: r.dimensions,
+            metadata: serde_json::from_str(&r.metadata).unwrap_or_default(),
+            created_at: layer0_core::db::parse_dt(&r.created_at),
+        })
+        .collect();
 
     let remote = state.llm.list_models().await.unwrap_or_default();
     let installed = list_installed_models(&state.config.installer.models_dir)
         .unwrap_or_default()
         .into_iter()
-        .map(|p| p.file_name().unwrap_or_default().to_string_lossy().to_string())
+        .map(|p| {
+            p.file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string()
+        })
         .collect::<Vec<_>>();
 
     Ok(Json(serde_json::json!({
@@ -55,12 +66,19 @@ pub async fn download_model(
     State(state): State<AppState>,
     Json(req): Json<DownloadModelRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let token = req.hf_token.as_deref().or(state.config.installer.hf_token.as_deref());
+    let token = req
+        .hf_token
+        .as_deref()
+        .or(state.config.installer.hf_token.as_deref());
     let path = download_hf_model(&state.config.installer, &req.repo, &req.filename, token)
         .await
         .map_err(anyhow::Error::from)?;
 
-    let name = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
+    let name = path
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
     let path_str = path.to_string_lossy().to_string();
     let now = layer0_core::db::now_str();
 
@@ -89,7 +107,9 @@ pub async fn delete_model(
     Path(name): Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
     #[derive(sqlx::FromRow)]
-    struct Row { path: Option<String> }
+    struct Row {
+        path: Option<String>,
+    }
 
     let row: Option<Row> = sqlx::query_as("SELECT path FROM models WHERE name = ?")
         .bind(&name)
@@ -100,7 +120,9 @@ pub async fn delete_model(
     match row {
         None => Err(ApiError::NotFound(format!("model {} not found", name))),
         Some(r) => {
-            if let Some(p) = r.path { let _ = std::fs::remove_file(&p); }
+            if let Some(p) = r.path {
+                let _ = std::fs::remove_file(&p);
+            }
             sqlx::query("DELETE FROM models WHERE name = ?")
                 .bind(&name)
                 .execute(&state.pool)
@@ -115,5 +137,7 @@ pub async fn install_llama(State(state): State<AppState>) -> ApiResult<Json<serd
     let dir = install_llama_cpp(&state.config.installer)
         .await
         .map_err(anyhow::Error::from)?;
-    Ok(Json(serde_json::json!({ "installed": true, "bin_dir": dir.display().to_string() })))
+    Ok(Json(
+        serde_json::json!({ "installed": true, "bin_dir": dir.display().to_string() }),
+    ))
 }

@@ -43,7 +43,9 @@ pub fn reciprocal_rank_fusion(result_lists: Vec<Vec<SearchResult>>, k: f32) -> V
     for list in result_lists {
         for (rank, result) in list.into_iter().enumerate() {
             let rrf = 1.0 / (k + rank as f32 + 1.0);
-            let entry = scores.entry(result.document.id.clone()).or_insert((result, 0.0));
+            let entry = scores
+                .entry(result.document.id.clone())
+                .or_insert((result, 0.0));
             entry.1 += rrf;
         }
     }
@@ -56,7 +58,11 @@ pub fn reciprocal_rank_fusion(result_lists: Vec<Vec<SearchResult>>, k: f32) -> V
         })
         .collect();
 
-    merged.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    merged.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     merged
 }
 
@@ -75,7 +81,10 @@ pub fn lexical_score(query: &str, document: &str) -> f32 {
     let mut score = 0.0_f32;
 
     for term in &query_words {
-        let tf = doc_words.iter().filter(|w| w.eq_ignore_ascii_case(term)).count() as f32;
+        let tf = doc_words
+            .iter()
+            .filter(|w| w.eq_ignore_ascii_case(term))
+            .count() as f32;
         score += (tf * (k1 + 1.0)) / (tf + k1 * (1.0 - b + b * doc_len / avg_len));
     }
     score

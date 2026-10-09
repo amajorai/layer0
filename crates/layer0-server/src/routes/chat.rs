@@ -1,4 +1,9 @@
-use axum::{body::Body, extract::State, response::{IntoResponse, Response}, Json};
+use axum::{
+    body::Body,
+    extract::State,
+    response::{IntoResponse, Response},
+    Json,
+};
 use futures::StreamExt;
 use layer0_core::types::ChatCompletionRequest;
 
@@ -12,10 +17,14 @@ pub async fn chat_completions(
     let stream = req.stream.unwrap_or(false);
 
     if stream {
-        let resp = state.llm.chat_stream(&req).await.map_err(anyhow::Error::from)?;
-        let bytes_stream = resp.bytes_stream().map(|r| {
-            r.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
-        });
+        let resp = state
+            .llm
+            .chat_stream(&req)
+            .await
+            .map_err(anyhow::Error::from)?;
+        let bytes_stream = resp
+            .bytes_stream()
+            .map(|r| r.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)));
         Ok(Response::builder()
             .header("Content-Type", "text/event-stream")
             .header("Cache-Control", "no-cache")

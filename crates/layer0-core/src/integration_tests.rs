@@ -6,8 +6,8 @@
 mod tests {
     use crate::config::Config;
     use crate::database::{
-        create_collection, create_database, delete_collection, delete_database,
-        ensure_collection, get_collection, list_collections, list_databases,
+        create_collection, create_database, delete_collection, delete_database, ensure_collection,
+        get_collection, list_collections, list_databases,
     };
     use crate::db::{connect, connect_database, now_str};
     use crate::embedding::fetch_document;
@@ -62,16 +62,11 @@ mod tests {
     }
 
     /// Count documents in `pool` that belong to `database_name`.
-    async fn count_docs_in_db(
-        pool: &sqlx::SqlitePool,
-        database_name: &str,
-    ) -> anyhow::Result<i64> {
-        let n: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM documents WHERE database_name = ?",
-        )
-        .bind(database_name)
-        .fetch_one(pool)
-        .await?;
+    async fn count_docs_in_db(pool: &sqlx::SqlitePool, database_name: &str) -> anyhow::Result<i64> {
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM documents WHERE database_name = ?")
+            .bind(database_name)
+            .fetch_one(pool)
+            .await?;
         Ok(n)
     }
 
@@ -122,9 +117,15 @@ mod tests {
 
         // Insert a document into the testdb file.
         let doc_id = "doc-flow1-001";
-        insert_document(&testdb_pool, doc_id, "hello from testdb", "testdb", "default")
-            .await
-            .expect("insert_document");
+        insert_document(
+            &testdb_pool,
+            doc_id,
+            "hello from testdb",
+            "testdb",
+            "default",
+        )
+        .await
+        .expect("insert_document");
 
         // Document must be visible when fetched from testdb.
         let found = fetch_document(&testdb_pool, doc_id)
@@ -292,9 +293,15 @@ mod tests {
 
         // Insert a document into otherdb.
         let other_doc_id = "doc-flow3-other";
-        insert_document(&other_pool, other_doc_id, "otherdb document", "otherdb", "default")
-            .await
-            .expect("insert into otherdb");
+        insert_document(
+            &other_pool,
+            other_doc_id,
+            "otherdb document",
+            "otherdb",
+            "default",
+        )
+        .await
+        .expect("insert into otherdb");
 
         // The otherdb document must NOT appear in the default database.
         let not_in_default = fetch_document(&default_pool, other_doc_id)
@@ -309,7 +316,10 @@ mod tests {
         let default_count = count_docs_in_db(&default_pool, "default")
             .await
             .expect("count default docs");
-        assert_eq!(default_count, 1, "default db should have exactly 1 document");
+        assert_eq!(
+            default_count, 1,
+            "default db should have exactly 1 document"
+        );
 
         let other_count = count_docs_in_db(&other_pool, "otherdb")
             .await
@@ -390,15 +400,24 @@ mod tests {
             .expect("delete db1");
 
         // list_databases must now return only default and db2.
-        let dbs_after = list_databases(&registry).await.expect("list_databases after delete");
+        let dbs_after = list_databases(&registry)
+            .await
+            .expect("list_databases after delete");
         let names_after: Vec<&str> = dbs_after.iter().map(|d| d.name.as_str()).collect();
-        assert!(names_after.contains(&"default"), "default must still be listed");
+        assert!(
+            names_after.contains(&"default"),
+            "default must still be listed"
+        );
         assert!(
             !names_after.contains(&"db1"),
             "db1 must not be listed after deletion"
         );
         assert!(names_after.contains(&"db2"), "db2 must still be listed");
-        assert_eq!(dbs_after.len(), 2, "exactly two databases expected after deletion");
+        assert_eq!(
+            dbs_after.len(),
+            2,
+            "exactly two databases expected after deletion"
+        );
 
         // File-level verification.
         assert!(!db1_file.exists(), "db1.db must be removed");
