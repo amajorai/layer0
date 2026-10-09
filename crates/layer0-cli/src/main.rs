@@ -5,8 +5,8 @@ use clap::{Parser, Subcommand};
 use layer0_core::{
     config::Config,
     database::{
-        create_collection, create_database, delete_collection, delete_database,
-        list_collections, list_databases,
+        create_collection, create_database, delete_collection, delete_database, list_collections,
+        list_databases,
     },
     db::{connect, connect_database},
     embedding::embed_document,
@@ -38,10 +38,10 @@ enum Commands {
     Init,
     /// Start the layer0 HTTP server
     Serve {
-        #[arg(long, default_value = "127.0.0.1")]
-        host: String,
-        #[arg(short, long, default_value = "8080")]
-        port: u16,
+        #[arg(long)]
+        host: Option<String>,
+        #[arg(short, long)]
+        port: Option<u16>,
     },
     /// Store a document in memory
     Store {
@@ -144,9 +144,7 @@ enum DbAction {
     /// List all databases
     Databases,
     /// List collections in a database
-    Collections {
-        database: String,
-    },
+    Collections { database: String },
     /// Create a new database
     CreateDatabase {
         name: String,
@@ -161,21 +159,20 @@ enum DbAction {
         description: Option<String>,
     },
     /// Delete a database and all its data
-    DeleteDatabase {
-        name: String,
-    },
+    DeleteDatabase { name: String },
     /// Delete a collection and all its data
-    DeleteCollection {
-        database: String,
-        name: String,
-    },
+    DeleteCollection { database: String, name: String },
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::registry()
         .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| "layer0=warn".into()))
-        .with(tracing_subscriber::fmt::layer().without_time().with_target(false))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .without_time()
+                .with_target(false),
+        )
         .init();
 
     let cli = Cli::parse();
@@ -191,12 +188,23 @@ async fn main() -> Result<()> {
                 std::fs::write(&cfg_path, include_str!("../../../config/default.toml"))?;
                 println!("created config: {}", cfg_path.display());
             }
-            println!("data dir: {}", layer0_core::config::default_data_dir().display());
+            println!(
+                "data dir: {}",
+                layer0_core::config::default_data_dir().display()
+            );
 
             // Generate MCP client configs for Claude Code and Cursor in the cwd.
             let mcp_bin = std::env::current_exe()
                 .ok()
-                .and_then(|p| p.parent().map(|d| d.join(if cfg!(windows) { "layer0-mcp.exe" } else { "layer0-mcp" })))
+                .and_then(|p| {
+                    p.parent().map(|d| {
+                        d.join(if cfg!(windows) {
+                            "layer0-mcp.exe"
+                        } else {
+                            "layer0-mcp"
+                        })
+                    })
+                })
                 .filter(|p| p.exists())
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_else(|| "layer0-mcp".to_string());
@@ -233,19 +241,39 @@ async fn main() -> Result<()> {
             let bin = std::env::current_exe()?
                 .parent()
                 .unwrap_or(&PathBuf::from("."))
-                .join(if cfg!(windows) { "layer0-server.exe" } else { "layer0-server" });
+                .join(if cfg!(windows) {
+                    "layer0-server.exe"
+                } else {
+                    "layer0-server"
+                });
             if bin.exists() {
-                let status = std::process::Command::new(&bin)
-                    .arg("--host").arg(&host)
-                    .arg("--port").arg(port.to_string())
-                    .status()?;
+                let mut command = std::process::Command::new(&bin);
+                if let Some(path) = &cli.config {
+                    command.arg("--config").arg(path);
+                }
+                if let Some(host) = host {
+                    command.arg("--host").arg(host);
+                }
+                if let Some(port) = port {
+                    command.arg("--port").arg(port.to_string());
+                }
+                let status = command.status()?;
                 std::process::exit(status.code().unwrap_or(0));
             }
-            eprintln!("layer0-server not found. Build with: cargo build --release -p layer0-server");
+            eprintln!(
+                "layer0-server not found. Build with: cargo build --release -p layer0-server"
+            );
             std::process::exit(1);
         }
 
-        Commands::Store { content, source, metadata, embed, database, collection } => {
+        Commands::Store {
+            content,
+            source,
+            metadata,
+            embed,
+            database,
+            collection,
+        } => {
             let content = match content {
                 Some(c) => c,
                 None => {
@@ -265,6 +293,11 @@ async fn main() -> Result<()> {
                 .unwrap_or_default();
 
             let pool = connect_database(&config, &database).await?;
+            layer0_core::chunk::validate_content(
+                &content,
+                config.chunking.chunk_size,
+                config.chunking.chunk_overlap,
+            )?;
             let id = uuid::Uuid::new_v4().to_string();
             let now = layer0_core::db::now_str();
             let meta_str = serde_json::to_string(&meta).unwrap_or_else(|_| "{}".into());
@@ -288,9 +321,15 @@ async fn main() -> Result<()> {
             if embed {
                 let llm = LlmClient::new(&config.llm, &config.effective_chat())?;
                 match embed_document(
-                    &pool, &llm, &id, &content, &config.llm.embedding_model,
-                    &database, &collection,
-                    config.chunking.chunk_size, config.chunking.chunk_overlap,
+                    &pool,
+                    &llm,
+                    &id,
+                    &content,
+                    &config.llm.embedding_model,
+                    &database,
+                    &collection,
+                    config.chunking.chunk_size,
+                    config.chunking.chunk_overlap,
                 )
                 .await
                 {
@@ -301,7 +340,13 @@ async fn main() -> Result<()> {
                 if config.rag.extract_graph && config.rag.mode != "vector" {
                     let chat_model = config.effective_chat().model;
                     if let Err(e) = layer0_core::graph::extract_and_store_graph(
-                        &pool, &llm, &chat_model, &id, &content, &database, &collection,
+                        &pool,
+                        &llm,
+                        &chat_model,
+                        &id,
+                        &content,
+                        &database,
+                        &collection,
                     )
                     .await
                     {
@@ -313,34 +358,68 @@ async fn main() -> Result<()> {
             println!("{}", id);
         }
 
-        Commands::Search { query, limit, rerank, json, database, collection } => {
+        Commands::Search {
+            query,
+            limit,
+            rerank,
+            json,
+            database,
+            collection,
+        } => {
             let pool = connect_database(&config, &database).await?;
             let llm = LlmClient::new(&config.llm, &config.effective_chat())?;
             let mode = RagMode::parse(&config.rag.mode);
             let do_rerank = rerank || config.rag.rerank;
-            let results = retrieve(&pool, &llm, &query, &config.llm.embedding_model, limit, mode, do_rerank, &database, &collection).await?;
+            let results = retrieve(
+                &pool,
+                &llm,
+                &query,
+                &config.llm.embedding_model,
+                limit,
+                mode,
+                do_rerank,
+                &database,
+                &collection,
+            )
+            .await?;
 
             if json {
                 println!("{}", serde_json::to_string_pretty(&results)?);
             } else {
-                if results.is_empty() { println!("no results"); }
+                if results.is_empty() {
+                    println!("no results");
+                }
                 for (i, r) in results.iter().enumerate() {
                     println!("\n[{}] score={:.3}", i + 1, r.score);
-                    if let Some(s) = &r.document.source { println!("    source: {}", s); }
+                    if let Some(s) = &r.document.source {
+                        println!("    source: {}", s);
+                    }
                     let preview = r.document.content.chars().take(200).collect::<String>();
-                    let ellipsis = if r.document.content.len() > 200 { "..." } else { "" };
+                    let ellipsis = if r.document.content.len() > 200 {
+                        "..."
+                    } else {
+                        ""
+                    };
                     println!("    {}{}", preview, ellipsis);
                 }
             }
         }
 
-        Commands::Ask { question, limit, no_sources, use_graph, database, collection } => {
+        Commands::Ask {
+            question,
+            limit,
+            no_sources,
+            use_graph,
+            database,
+            collection,
+        } => {
             let pool = connect_database(&config, &database).await?;
             let llm = LlmClient::new(&config.llm, &config.effective_chat())?;
 
             eprintln!("searching knowledge base...");
             let resp = rag_query(
-                &pool, &llm,
+                &pool,
+                &llm,
                 &RagRequest {
                     query: question,
                     limit,
@@ -349,7 +428,11 @@ async fn main() -> Result<()> {
                     embedding_model: None,
                     use_graph,
                     rerank: config.rag.rerank,
-                    mode: Some(if use_graph { "graph".to_string() } else { config.rag.mode.clone() }),
+                    mode: Some(if use_graph {
+                        "graph".to_string()
+                    } else {
+                        config.rag.mode.clone()
+                    }),
                     stream: false,
                     database,
                     collection,
@@ -370,11 +453,16 @@ async fn main() -> Result<()> {
             }
         }
 
-        Commands::Install { target: InstallTarget::Llama } => {
+        Commands::Install {
+            target: InstallTarget::Llama,
+        } => {
             eprintln!("installing llama.cpp...");
             let dir = install_llama_cpp(&config.installer).await?;
             println!("installed: {}", dir.display());
-            println!("start: llama-server --model <model.gguf> --port {} --embedding", config.installer.llama_server_port);
+            println!(
+                "start: llama-server --model <model.gguf> --port {} --embedding",
+                config.installer.llama_server_port
+            );
         }
 
         Commands::Model { action } => match action {
@@ -386,35 +474,65 @@ async fn main() -> Result<()> {
                 } else {
                     for m in &models {
                         let size = std::fs::metadata(m).map(|m| m.len()).unwrap_or(0);
-                        println!("{} ({:.1} GB)", m.file_name().unwrap_or_default().to_string_lossy(), size as f64 / 1_073_741_824.0);
+                        println!(
+                            "{} ({:.1} GB)",
+                            m.file_name().unwrap_or_default().to_string_lossy(),
+                            size as f64 / 1_073_741_824.0
+                        );
                     }
                 }
             }
-            ModelAction::Download { repo, filename, model_type: _, token } => {
+            ModelAction::Download {
+                repo,
+                filename,
+                model_type: _,
+                token,
+            } => {
                 eprintln!("downloading {}...", filename);
-                let path = download_hf_model(&config.installer, &repo, &filename, token.as_deref()).await?;
+                let path = download_hf_model(&config.installer, &repo, &filename, token.as_deref())
+                    .await?;
                 println!("{}", path.display());
-                println!("start: llama-server --model {} --port {} --embedding", path.display(), config.installer.llama_server_port);
+                println!(
+                    "start: llama-server --model {} --port {} --embedding",
+                    path.display(),
+                    config.installer.llama_server_port
+                );
             }
-        }
+        },
 
         Commands::Db { action } => {
             let pool = connect(&config).await?;
             match action {
                 DbAction::Stats => {
-                    let docs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM documents").fetch_one(&pool).await?;
-                    let embs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM chunks").fetch_one(&pool).await?;
-                    let nodes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM graph_nodes").fetch_one(&pool).await?;
-                    let edges: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM graph_edges").fetch_one(&pool).await?;
+                    let docs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM documents")
+                        .fetch_one(&pool)
+                        .await?;
+                    let embs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM chunks")
+                        .fetch_one(&pool)
+                        .await?;
+                    let nodes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM graph_nodes")
+                        .fetch_one(&pool)
+                        .await?;
+                    let edges: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM graph_edges")
+                        .fetch_one(&pool)
+                        .await?;
                     println!("documents:  {}", docs);
                     println!("embeddings: {}", embs);
                     println!("nodes:      {}", nodes);
                     println!("edges:      {}", edges);
                     println!("db:         {}", config.database.path.display());
                 }
-                DbAction::List { limit, database, collection } => {
+                DbAction::List {
+                    limit,
+                    database,
+                    collection,
+                } => {
                     #[derive(sqlx::FromRow)]
-                    struct Row { id: String, content: String, source: Option<String> }
+                    struct Row {
+                        id: String,
+                        content: String,
+                        source: Option<String>,
+                    }
 
                     let db_pool = connect_database(&config, &database).await?;
                     let rows: Vec<Row> = sqlx::query_as(
@@ -426,7 +544,12 @@ async fn main() -> Result<()> {
 
                     for r in rows {
                         let preview = r.content.chars().take(80).collect::<String>();
-                        println!("{} | {} | {}", r.id, r.source.as_deref().unwrap_or("-"), preview);
+                        println!(
+                            "{} | {} | {}",
+                            r.id,
+                            r.source.as_deref().unwrap_or("-"),
+                            preview
+                        );
                     }
                 }
                 DbAction::Databases => {
@@ -453,7 +576,11 @@ async fn main() -> Result<()> {
                     create_database(&pool, &config, &name, description.as_deref()).await?;
                     println!("created database '{}'", name);
                 }
-                DbAction::CreateCollection { database, name, description } => {
+                DbAction::CreateCollection {
+                    database,
+                    name,
+                    description,
+                } => {
                     create_collection(&pool, &database, &name, description.as_deref()).await?;
                     println!("created collection '{}/{}'", database, name);
                 }
@@ -462,7 +589,17 @@ async fn main() -> Result<()> {
                     println!("deleted database '{}'", name);
                 }
                 DbAction::DeleteCollection { database, name } => {
-                    delete_collection(&pool, &database, &name).await?;
+                    let data_pool = if database == "default" {
+                        pool.clone()
+                    } else {
+                        connect_database(&config, &database).await?
+                    };
+                    delete_collection(&data_pool, &database, &name).await?;
+                    sqlx::query("DELETE FROM collections WHERE database_name = ? AND name = ?")
+                        .bind(&database)
+                        .bind(&name)
+                        .execute(&pool)
+                        .await?;
                     println!("deleted collection '{}/{}'", database, name);
                 }
             }
@@ -471,7 +608,11 @@ async fn main() -> Result<()> {
         Commands::Status => {
             let llm = LlmClient::new(&config.llm, &config.effective_chat())?;
             let ok = llm.health().await;
-            println!("LLM:      {} ({})", if ok { "online" } else { "offline" }, config.llm.base_url);
+            println!(
+                "LLM:      {} ({})",
+                if ok { "online" } else { "offline" },
+                config.llm.base_url
+            );
             println!("database: {}", config.database.path.display());
             println!("models:   {}", config.installer.models_dir.display());
             if let Ok(pool) = connect(&config).await {
@@ -487,9 +628,17 @@ async fn main() -> Result<()> {
             let bin = std::env::current_exe()?
                 .parent()
                 .unwrap_or(&PathBuf::from("."))
-                .join(if cfg!(windows) { "layer0-mcp.exe" } else { "layer0-mcp" });
+                .join(if cfg!(windows) {
+                    "layer0-mcp.exe"
+                } else {
+                    "layer0-mcp"
+                });
             if bin.exists() {
-                let s = std::process::Command::new(&bin).status()?;
+                let mut command = std::process::Command::new(&bin);
+                if let Some(path) = &cli.config {
+                    command.arg("--config").arg(path);
+                }
+                let s = command.status()?;
                 std::process::exit(s.code().unwrap_or(0));
             }
             eprintln!("layer0-mcp not found. Build with: cargo build --release -p layer0-mcp");

@@ -22,7 +22,11 @@ struct Args {
 async fn main() -> Result<()> {
     tracing_subscriber::registry()
         .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| "layer0=info".into()))
-        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr).without_time())
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(std::io::stderr)
+                .without_time(),
+        )
         .init();
 
     let args = Args::parse();
@@ -72,11 +76,14 @@ async fn write_line(stdout: &mut tokio::io::Stdout, resp: &JsonRpcResponse) -> R
 async fn handle(ctx: &ToolContext, req: JsonRpcRequest) -> JsonRpcResponse {
     let id = req.id.clone();
     match req.method.as_str() {
-        "initialize" => JsonRpcResponse::ok(id, json!({
-            "protocolVersion": "2024-11-05",
-            "capabilities": { "tools": {} },
-            "serverInfo": { "name": "layer0", "version": env!("CARGO_PKG_VERSION") }
-        })),
+        "initialize" => JsonRpcResponse::ok(
+            id,
+            json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": { "tools": {} },
+                "serverInfo": { "name": "layer0", "version": env!("CARGO_PKG_VERSION") }
+            }),
+        ),
 
         "notifications/initialized" | "ping" => JsonRpcResponse::ok(id, json!({})),
 
@@ -84,18 +91,30 @@ async fn handle(ctx: &ToolContext, req: JsonRpcRequest) -> JsonRpcResponse {
 
         "tools/call" => {
             let params = req.params.as_ref().and_then(|p| p.as_object());
-            let name = params.and_then(|p| p.get("name")).and_then(|n| n.as_str()).unwrap_or("");
-            let args = params.and_then(|p| p.get("arguments")).cloned().unwrap_or(json!({}));
+            let name = params
+                .and_then(|p| p.get("name"))
+                .and_then(|n| n.as_str())
+                .unwrap_or("");
+            let args = params
+                .and_then(|p| p.get("arguments"))
+                .cloned()
+                .unwrap_or(json!({}));
 
             match dispatch(ctx, name, &args).await {
-                Ok(content) => JsonRpcResponse::ok(id, json!({
-                    "content": [{ "type": "text", "text": serde_json::to_string_pretty(&content).unwrap_or_default() }],
-                    "isError": false
-                })),
-                Err(e) => JsonRpcResponse::ok(id, json!({
-                    "content": [{ "type": "text", "text": format!("Error: {}", e) }],
-                    "isError": true
-                })),
+                Ok(content) => JsonRpcResponse::ok(
+                    id,
+                    json!({
+                        "content": [{ "type": "text", "text": serde_json::to_string_pretty(&content).unwrap_or_default() }],
+                        "isError": false
+                    }),
+                ),
+                Err(e) => JsonRpcResponse::ok(
+                    id,
+                    json!({
+                        "content": [{ "type": "text", "text": format!("Error: {}", e) }],
+                        "isError": true
+                    }),
+                ),
             }
         }
 

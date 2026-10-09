@@ -1,6 +1,6 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
+use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use std::sync::Once;
 use tracing::info;
 
@@ -12,8 +12,15 @@ static VEC_INIT: Once = Once::new();
 /// `vec0` virtual table module. Must run before any connection is created.
 fn register_sqlite_vec() {
     VEC_INIT.call_once(|| unsafe {
-        libsqlite3_sys::sqlite3_auto_extension(Some(std::mem::transmute(
-            sqlite_vec::sqlite3_vec_init as *const (),
+        libsqlite3_sys::sqlite3_auto_extension(Some(std::mem::transmute::<
+            *const (),
+            unsafe extern "C" fn(
+                *mut libsqlite3_sys::sqlite3,
+                *mut *const std::ffi::c_char,
+                *const libsqlite3_sys::sqlite3_api_routines,
+            ) -> std::ffi::c_int,
+        >(
+            sqlite_vec::sqlite3_vec_init as *const ()
         )));
     });
 }
@@ -44,12 +51,10 @@ async fn open_pool(config: &Config, url: &str) -> Result<SqlitePool> {
 }
 
 async fn apply_migration(pool: &SqlitePool, name: &str, sql: &str) -> Result<()> {
-    let exists: bool = sqlx::query_scalar(
-        "SELECT COUNT(*) > 0 FROM _migrations WHERE name = ?"
-    )
-    .bind(name)
-    .fetch_one(pool)
-    .await?;
+    let exists: bool = sqlx::query_scalar("SELECT COUNT(*) > 0 FROM _migrations WHERE name = ?")
+        .bind(name)
+        .fetch_one(pool)
+        .await?;
 
     if !exists {
         sqlx::query(sql).execute(pool).await?;
@@ -65,7 +70,9 @@ async fn apply_migration(pool: &SqlitePool, name: &str, sql: &str) -> Result<()>
 pub async fn run_migrations(pool: &SqlitePool, embedding_dims: usize) -> Result<()> {
     sqlx::query("PRAGMA journal_mode=WAL").execute(pool).await?;
     sqlx::query("PRAGMA foreign_keys=ON").execute(pool).await?;
-    sqlx::query("PRAGMA synchronous=NORMAL").execute(pool).await?;
+    sqlx::query("PRAGMA synchronous=NORMAL")
+        .execute(pool)
+        .await?;
 
     sqlx::query(
         r#"CREATE TABLE IF NOT EXISTS _migrations (
@@ -209,12 +216,10 @@ pub async fn run_migrations(pool: &SqlitePool, embedding_dims: usize) -> Result<
 
     // Ensure the default database and collection exist
     let now = now_str();
-    sqlx::query(
-        "INSERT OR IGNORE INTO databases (name, created_at) VALUES ('default', ?)"
-    )
-    .bind(&now)
-    .execute(pool)
-    .await?;
+    sqlx::query("INSERT OR IGNORE INTO databases (name, created_at) VALUES ('default', ?)")
+        .bind(&now)
+        .execute(pool)
+        .await?;
 
     sqlx::query(
         "INSERT OR IGNORE INTO collections (database_name, name, created_at) VALUES ('default', 'default', ?)"
@@ -314,8 +319,9 @@ pub fn serialize_embedding(embedding: &[f32]) -> Vec<u8> {
 }
 
 pub fn deserialize_embedding(bytes: &[u8]) -> Vec<f32> {
-    bytes
-        .chunks_exact(4)
+    let (chunks, _) = bytes.as_chunks::<4>();
+    chunks
+        .iter()
         .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect()
 }
@@ -327,7 +333,11 @@ pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
     let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
     let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-    if norm_a == 0.0 || norm_b == 0.0 { 0.0 } else { dot / (norm_a * norm_b) }
+    if norm_a == 0.0 || norm_b == 0.0 {
+        0.0
+    } else {
+        dot / (norm_a * norm_b)
+    }
 }
 
 pub fn now_str() -> String {

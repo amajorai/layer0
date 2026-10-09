@@ -190,7 +190,10 @@ pub fn model_stem(filename: &str) -> String {
 /// Whether a base URL points at the local machine (so we should manage a sidecar).
 pub fn is_local_url(url: &str) -> bool {
     let u = url.to_ascii_lowercase();
-    u.contains("127.0.0.1") || u.contains("localhost") || u.contains("[::1]") || u.contains("0.0.0.0")
+    u.contains("127.0.0.1")
+        || u.contains("localhost")
+        || u.contains("[::1]")
+        || u.contains("0.0.0.0")
 }
 
 impl Config {
@@ -201,8 +204,14 @@ impl Config {
             .set_default("server.host", default.server.host.clone())?
             .set_default("server.port", default.server.port as i64)?
             .set_default("server.cors_origins", vec!["*"])?
-            .set_default("database.path", default.database.path.to_string_lossy().as_ref())?
-            .set_default("database.max_connections", default.database.max_connections as i64)?
+            .set_default(
+                "database.path",
+                default.database.path.to_string_lossy().as_ref(),
+            )?
+            .set_default(
+                "database.max_connections",
+                default.database.max_connections as i64,
+            )?
             .set_default("llm.base_url", default.llm.base_url.clone())?
             .set_default("llm.embedding_model", default.llm.embedding_model.clone())?
             .set_default("llm.timeout_secs", default.llm.timeout_secs as i64)?
@@ -211,22 +220,52 @@ impl Config {
             .set_default("chat.base_url", default.chat.base_url.clone())?
             .set_default("chat.model", default.chat.model.clone())?
             .set_default("chat.timeout_secs", default.chat.timeout_secs as i64)?
-            .set_default("embeddings.dimensions", default.embeddings.dimensions as i64)?
-            .set_default("embeddings.batch_size", default.embeddings.batch_size as i64)?
-            .set_default("embeddings.search_limit", default.embeddings.search_limit as i64)?
+            .set_default(
+                "embeddings.dimensions",
+                default.embeddings.dimensions as i64,
+            )?
+            .set_default(
+                "embeddings.batch_size",
+                default.embeddings.batch_size as i64,
+            )?
+            .set_default(
+                "embeddings.search_limit",
+                default.embeddings.search_limit as i64,
+            )?
             .set_default("chunking.chunk_size", default.chunking.chunk_size as i64)?
-            .set_default("chunking.chunk_overlap", default.chunking.chunk_overlap as i64)?
+            .set_default(
+                "chunking.chunk_overlap",
+                default.chunking.chunk_overlap as i64,
+            )?
             .set_default("rag.mode", default.rag.mode.clone())?
             .set_default("rag.rerank", default.rag.rerank)?
             .set_default("rag.extract_graph", default.rag.extract_graph)?
-            .set_default("installer.bin_dir", default.installer.bin_dir.to_string_lossy().as_ref())?
-            .set_default("installer.models_dir", default.installer.models_dir.to_string_lossy().as_ref())?
-            .set_default("installer.llama_server_port", default.installer.llama_server_port as i64)?
-            .set_default("installer.embedding_repo", default.installer.embedding_repo.clone())?
-            .set_default("installer.embedding_file", default.installer.embedding_file.clone())?
+            .set_default(
+                "installer.bin_dir",
+                default.installer.bin_dir.to_string_lossy().as_ref(),
+            )?
+            .set_default(
+                "installer.models_dir",
+                default.installer.models_dir.to_string_lossy().as_ref(),
+            )?
+            .set_default(
+                "installer.llama_server_port",
+                default.installer.llama_server_port as i64,
+            )?
+            .set_default(
+                "installer.embedding_repo",
+                default.installer.embedding_repo.clone(),
+            )?
+            .set_default(
+                "installer.embedding_file",
+                default.installer.embedding_file.clone(),
+            )?
             .set_default("installer.chat_repo", default.installer.chat_repo.clone())?
             .set_default("installer.chat_file", default.installer.chat_file.clone())?
-            .set_default("installer.chat_server_port", default.installer.chat_server_port as i64)?
+            .set_default(
+                "installer.chat_server_port",
+                default.installer.chat_server_port as i64,
+            )?
             .set_default("installer.auto_start", default.installer.auto_start)?
             .set_default("update.repo", default.update.repo.clone())?
             .set_default("update.auto_check", default.update.auto_check)?
@@ -293,7 +332,9 @@ impl Config {
     }
 
     pub fn databases_dir(&self) -> std::path::PathBuf {
-        self.database.path.parent()
+        self.database
+            .path
+            .parent()
             .unwrap_or(std::path::Path::new("."))
             .join("databases")
     }

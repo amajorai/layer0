@@ -7,9 +7,8 @@ use crate::types::{Collection, Database};
 /// Windows reserved device names that must not be used as filenames.
 /// These are case-insensitive on Windows and cause silent I/O redirection.
 const WINDOWS_RESERVED: &[&str] = &[
-    "CON", "PRN", "AUX", "NUL",
-    "COM0", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-    "LPT0", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    "CON", "PRN", "AUX", "NUL", "COM0", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7",
+    "COM8", "COM9", "LPT0", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
 ];
 
 /// Maximum byte length for a database or collection name.
@@ -35,7 +34,10 @@ fn validate_name(name: &str) -> Result<()> {
             MAX_NAME_LEN
         ));
     }
-    if !name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.') {
+    if !name
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.')
+    {
         return Err(anyhow::anyhow!(
             "name may only contain letters, digits, underscores, hyphens, and dots"
         ));
@@ -43,9 +45,7 @@ fn validate_name(name: &str) -> Result<()> {
     // A name composed entirely of dots (e.g. "..", "...") is a path-traversal
     // fragment even when the individual characters are allowed.
     if name.chars().all(|c| c == '.') {
-        return Err(anyhow::anyhow!(
-            "name must not consist entirely of dots"
-        ));
+        return Err(anyhow::anyhow!("name must not consist entirely of dots"));
     }
     // Reject Windows reserved device names to prevent I/O redirection on Windows.
     let upper = name.to_uppercase();
@@ -62,13 +62,11 @@ fn validate_name(name: &str) -> Result<()> {
 
 pub async fn ensure_database(pool: &SqlitePool, name: &str) -> Result<()> {
     validate_name(name)?;
-    sqlx::query(
-        "INSERT OR IGNORE INTO databases (name, created_at) VALUES (?, ?)"
-    )
-    .bind(name)
-    .bind(now_str())
-    .execute(pool)
-    .await?;
+    sqlx::query("INSERT OR IGNORE INTO databases (name, created_at) VALUES (?, ?)")
+        .bind(name)
+        .bind(now_str())
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -77,7 +75,7 @@ pub async fn ensure_collection(pool: &SqlitePool, database_name: &str, name: &st
     validate_name(name)?;
     ensure_database(pool, database_name).await?;
     sqlx::query(
-        "INSERT OR IGNORE INTO collections (database_name, name, created_at) VALUES (?, ?, ?)"
+        "INSERT OR IGNORE INTO collections (database_name, name, created_at) VALUES (?, ?, ?)",
     )
     .bind(database_name)
     .bind(name)
@@ -89,31 +87,41 @@ pub async fn ensure_collection(pool: &SqlitePool, database_name: &str, name: &st
 
 pub async fn list_databases(pool: &SqlitePool) -> Result<Vec<Database>> {
     #[derive(sqlx::FromRow)]
-    struct Row { name: String, description: Option<String>, created_at: String }
+    struct Row {
+        name: String,
+        description: Option<String>,
+        created_at: String,
+    }
 
     let rows: Vec<Row> = sqlx::query_as(
-        "SELECT name, description, created_at FROM databases ORDER BY created_at ASC"
+        "SELECT name, description, created_at FROM databases ORDER BY created_at ASC",
     )
     .fetch_all(pool)
     .await?;
 
-    Ok(rows.into_iter().map(|r| Database {
-        name: r.name,
-        description: r.description,
-        created_at: crate::db::parse_dt(&r.created_at),
-    }).collect())
+    Ok(rows
+        .into_iter()
+        .map(|r| Database {
+            name: r.name,
+            description: r.description,
+            created_at: crate::db::parse_dt(&r.created_at),
+        })
+        .collect())
 }
 
 pub async fn get_database(pool: &SqlitePool, name: &str) -> Result<Option<Database>> {
     #[derive(sqlx::FromRow)]
-    struct Row { name: String, description: Option<String>, created_at: String }
+    struct Row {
+        name: String,
+        description: Option<String>,
+        created_at: String,
+    }
 
-    let row: Option<Row> = sqlx::query_as(
-        "SELECT name, description, created_at FROM databases WHERE name = ?"
-    )
-    .bind(name)
-    .fetch_optional(pool)
-    .await?;
+    let row: Option<Row> =
+        sqlx::query_as("SELECT name, description, created_at FROM databases WHERE name = ?")
+            .bind(name)
+            .fetch_optional(pool)
+            .await?;
 
     Ok(row.map(|r| Database {
         name: r.name,
@@ -122,17 +130,20 @@ pub async fn get_database(pool: &SqlitePool, name: &str) -> Result<Option<Databa
     }))
 }
 
-pub async fn create_database(pool: &SqlitePool, config: &crate::config::Config, name: &str, description: Option<&str>) -> Result<Database> {
+pub async fn create_database(
+    pool: &SqlitePool,
+    config: &crate::config::Config,
+    name: &str,
+    description: Option<&str>,
+) -> Result<Database> {
     validate_name(name)?;
     let now = now_str();
-    sqlx::query(
-        "INSERT INTO databases (name, description, created_at) VALUES (?, ?, ?)"
-    )
-    .bind(name)
-    .bind(description)
-    .bind(&now)
-    .execute(pool)
-    .await?;
+    sqlx::query("INSERT INTO databases (name, description, created_at) VALUES (?, ?, ?)")
+        .bind(name)
+        .bind(description)
+        .bind(&now)
+        .execute(pool)
+        .await?;
 
     // Create the dedicated .db file for this database
     if name != "default" {
@@ -147,21 +158,30 @@ pub async fn create_database(pool: &SqlitePool, config: &crate::config::Config, 
     })
 }
 
-pub async fn delete_database(pool: &SqlitePool, config: &crate::config::Config, name: &str) -> Result<bool> {
+pub async fn delete_database(
+    pool: &SqlitePool,
+    config: &crate::config::Config,
+    name: &str,
+) -> Result<bool> {
     // Validate first — must happen before any FS or DB operation.
     validate_name(name)?;
     if name == "default" {
         return Err(anyhow::anyhow!("cannot delete the default database"));
     }
     // Remove collections from registry
-    sqlx::query("DELETE FROM collections WHERE database_name = ?").bind(name).execute(pool).await?;
+    sqlx::query("DELETE FROM collections WHERE database_name = ?")
+        .bind(name)
+        .execute(pool)
+        .await?;
     // Remove from databases registry
     let r = sqlx::query("DELETE FROM databases WHERE name = ?")
         .bind(name)
         .execute(pool)
         .await?;
     // Build the candidate path and verify it is inside databases_dir before deleting.
-    let databases_dir = config.databases_dir().canonicalize()
+    let databases_dir = config
+        .databases_dir()
+        .canonicalize()
         .unwrap_or_else(|_| config.databases_dir());
     let db_path = config.databases_dir().join(format!("{}.db", name));
     if db_path.exists() {
@@ -173,14 +193,48 @@ pub async fn delete_database(pool: &SqlitePool, config: &crate::config::Config, 
                 canonical.display()
             ));
         }
-        std::fs::remove_file(&canonical)?;
+        remove_database_file(&canonical).await?;
+        for suffix in ["-wal", "-shm"] {
+            let sidecar = config.databases_dir().join(format!("{name}.db{suffix}"));
+            match remove_database_file(&sidecar).await {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
     }
     Ok(r.rows_affected() > 0)
 }
 
+async fn remove_database_file(path: &std::path::Path) -> std::io::Result<()> {
+    const WINDOWS_SHARING_VIOLATION: i32 = 32;
+    const MAX_ATTEMPTS: usize = 20;
+
+    for attempt in 1..=MAX_ATTEMPTS {
+        match std::fs::remove_file(path) {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if cfg!(windows)
+                    && error.raw_os_error() == Some(WINDOWS_SHARING_VIOLATION)
+                    && attempt < MAX_ATTEMPTS =>
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    unreachable!("the final removal attempt always returns")
+}
+
 pub async fn list_collections(pool: &SqlitePool, database_name: &str) -> Result<Vec<Collection>> {
     #[derive(sqlx::FromRow)]
-    struct Row { database_name: String, name: String, description: Option<String>, created_at: String }
+    struct Row {
+        database_name: String,
+        name: String,
+        description: Option<String>,
+        created_at: String,
+    }
 
     let rows: Vec<Row> = sqlx::query_as(
         "SELECT database_name, name, description, created_at FROM collections WHERE database_name = ? ORDER BY created_at ASC"
@@ -189,17 +243,29 @@ pub async fn list_collections(pool: &SqlitePool, database_name: &str) -> Result<
     .fetch_all(pool)
     .await?;
 
-    Ok(rows.into_iter().map(|r| Collection {
-        database_name: r.database_name,
-        name: r.name,
-        description: r.description,
-        created_at: crate::db::parse_dt(&r.created_at),
-    }).collect())
+    Ok(rows
+        .into_iter()
+        .map(|r| Collection {
+            database_name: r.database_name,
+            name: r.name,
+            description: r.description,
+            created_at: crate::db::parse_dt(&r.created_at),
+        })
+        .collect())
 }
 
-pub async fn get_collection(pool: &SqlitePool, database_name: &str, name: &str) -> Result<Option<Collection>> {
+pub async fn get_collection(
+    pool: &SqlitePool,
+    database_name: &str,
+    name: &str,
+) -> Result<Option<Collection>> {
     #[derive(sqlx::FromRow)]
-    struct Row { database_name: String, name: String, description: Option<String>, created_at: String }
+    struct Row {
+        database_name: String,
+        name: String,
+        description: Option<String>,
+        created_at: String,
+    }
 
     let row: Option<Row> = sqlx::query_as(
         "SELECT database_name, name, description, created_at FROM collections WHERE database_name = ? AND name = ?"
@@ -251,27 +317,21 @@ pub async fn delete_collection(pool: &SqlitePool, database_name: &str, name: &st
     }
     crate::embedding::purge_collection_vectors(pool, database_name, Some(name)).await?;
     let mut tx = pool.begin().await?;
-    sqlx::query(
-        "DELETE FROM documents WHERE database_name = ? AND collection_name = ?"
-    )
-    .bind(database_name)
-    .bind(name)
-    .execute(&mut *tx)
-    .await?;
-    sqlx::query(
-        "DELETE FROM graph_nodes WHERE database_name = ? AND collection_name = ?"
-    )
-    .bind(database_name)
-    .bind(name)
-    .execute(&mut *tx)
-    .await?;
-    let r = sqlx::query(
-        "DELETE FROM collections WHERE database_name = ? AND name = ?"
-    )
-    .bind(database_name)
-    .bind(name)
-    .execute(&mut *tx)
-    .await?;
+    sqlx::query("DELETE FROM documents WHERE database_name = ? AND collection_name = ?")
+        .bind(database_name)
+        .bind(name)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM graph_nodes WHERE database_name = ? AND collection_name = ?")
+        .bind(database_name)
+        .bind(name)
+        .execute(&mut *tx)
+        .await?;
+    let r = sqlx::query("DELETE FROM collections WHERE database_name = ? AND name = ?")
+        .bind(database_name)
+        .bind(name)
+        .execute(&mut *tx)
+        .await?;
     tx.commit().await?;
     Ok(r.rows_affected() > 0)
 }
@@ -418,8 +478,8 @@ mod tests {
     // Names that merely start with a reserved prefix but are longer are fine.
     #[test]
     fn names_starting_with_reserved_prefix_are_allowed() {
-        ok("null");        // "null" != "NUL"
-        ok("console");     // starts with "con" but not exactly "CON"
+        ok("null"); // "null" != "NUL"
+        ok("console"); // starts with "con" but not exactly "CON"
         ok("NULLdb");
     }
 
@@ -441,7 +501,9 @@ mod tests {
             .connect("sqlite::memory:")
             .await
             .expect("in-memory pool");
-        crate::db::run_migrations(&pool, 4).await.expect("migrations");
+        crate::db::run_migrations(&pool, 4)
+            .await
+            .expect("migrations");
         pool
     }
 
@@ -458,9 +520,14 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let cfg = make_config(tmp.path());
 
-        create_database(&pool, &cfg, "mydb", None).await.expect("first create ok");
+        create_database(&pool, &cfg, "mydb", None)
+            .await
+            .expect("first create ok");
         let second = create_database(&pool, &cfg, "mydb", None).await;
-        assert!(second.is_err(), "second create_database for same name must fail");
+        assert!(
+            second.is_err(),
+            "second create_database for same name must fail"
+        );
     }
 
     // P1: deleting a non-existent database returns Ok(false), does not panic.
@@ -491,8 +558,13 @@ mod tests {
     #[tokio::test]
     async fn state_list_collections_of_nonexistent_database_is_empty() {
         let pool = make_pool().await;
-        let cols = list_collections(&pool, "ghost_db").await.expect("list_collections should not error");
-        assert!(cols.is_empty(), "non-existent database should have no collections");
+        let cols = list_collections(&pool, "ghost_db")
+            .await
+            .expect("list_collections should not error");
+        assert!(
+            cols.is_empty(),
+            "non-existent database should have no collections"
+        );
     }
 
     // Null/missing: description=None is stored and round-tripped correctly.
@@ -502,10 +574,15 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let cfg = make_config(tmp.path());
 
-        let db = create_database(&pool, &cfg, "nodesc", None).await.expect("create ok");
+        let db = create_database(&pool, &cfg, "nodesc", None)
+            .await
+            .expect("create ok");
         assert_eq!(db.description, None);
 
-        let fetched = get_database(&pool, "nodesc").await.expect("get ok").expect("exists");
+        let fetched = get_database(&pool, "nodesc")
+            .await
+            .expect("get ok")
+            .expect("exists");
         assert_eq!(fetched.description, None);
     }
 
@@ -517,7 +594,8 @@ mod tests {
         let cfg = make_config(tmp.path());
         let name = "a".repeat(MAX_NAME_LEN);
 
-        let db = create_database(&pool, &cfg, &name, None).await
+        let db = create_database(&pool, &cfg, &name, None)
+            .await
             .expect("max-length name should be accepted");
         assert_eq!(db.name.len(), MAX_NAME_LEN);
     }

@@ -23,9 +23,8 @@ pub async fn embed_document(
     chunk_size: usize,
     chunk_overlap: usize,
 ) -> Result<usize> {
+    let chunks = chunk_text(content, chunk_size, chunk_overlap)?;
     purge_document_vectors(pool, document_id).await?;
-
-    let chunks = chunk_text(content, chunk_size, chunk_overlap);
     let now = now_str();
     let mut stored = 0usize;
 
@@ -115,6 +114,7 @@ pub async fn purge_collection_vectors(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn search_similar(
     pool: &SqlitePool,
     llm: &LlmClient,
@@ -125,8 +125,19 @@ pub async fn search_similar(
     database_name: &str,
     collection_name: &str,
 ) -> Result<Vec<SearchResult>> {
+    anyhow::ensure!(limit <= 300, "Search limit exceeds budget");
+
     let query_emb = llm.embed_one(query, model).await?;
-    search_by_embedding(pool, &query_emb, model, limit, threshold, database_name, collection_name).await
+    search_by_embedding(
+        pool,
+        &query_emb,
+        model,
+        limit,
+        threshold,
+        database_name,
+        collection_name,
+    )
+    .await
 }
 
 #[allow(unused_variables)]
@@ -139,6 +150,8 @@ pub async fn search_by_embedding(
     database_name: &str,
     collection_name: &str,
 ) -> Result<Vec<SearchResult>> {
+    anyhow::ensure!(limit <= 300, "Search limit exceeds budget");
+
     if limit == 0 {
         return Ok(vec![]);
     }
@@ -172,7 +185,8 @@ pub async fn search_by_embedding(
     .await?;
 
     // Collapse chunk hits to their parent documents, keeping the best chunk.
-    let mut seen: std::collections::HashMap<String, (f32, String)> = std::collections::HashMap::new();
+    let mut seen: std::collections::HashMap<String, (f32, String)> =
+        std::collections::HashMap::new();
     let mut order: Vec<String> = Vec::new();
     for h in hits {
         let score = 1.0 - h.distance as f32;
@@ -213,6 +227,8 @@ pub async fn fts_search(
     database_name: &str,
     collection_name: &str,
 ) -> Result<Vec<SearchResult>> {
+    anyhow::ensure!(limit <= 300, "Search limit exceeds budget");
+
     #[derive(sqlx::FromRow)]
     struct FtsRow {
         id: String,

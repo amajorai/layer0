@@ -1,4 +1,7 @@
-use axum::{extract::{Path, State}, Json};
+use axum::{
+    extract::{Path, State},
+    Json,
+};
 use layer0_core::{
     rag::rag_query,
     retrieval::{retrieve, RagMode},
@@ -30,17 +33,27 @@ async fn run_search(state: AppState, req: SearchRequest) -> ApiResult<Json<Vec<S
         return Ok(Json(vec![]));
     }
 
-    let pool = state.pool_for(&req.database).await.map_err(anyhow::Error::from)?;
-    let model = req.model.as_deref().unwrap_or(state.embedding_model()).to_string();
+    let pool = state.pool_for(&req.database).await?;
+    let model = req
+        .model
+        .as_deref()
+        .unwrap_or(state.embedding_model())
+        .to_string();
     let mode = RagMode::parse(req.mode.as_deref().unwrap_or(&state.config.rag.mode));
     let rerank = req.rerank || state.config.rag.rerank;
 
     let results = retrieve(
-        &pool, &state.llm, &req.query, &model, req.limit, mode, rerank,
-        &req.database, &req.collection,
+        &pool,
+        &state.llm,
+        &req.query,
+        &model,
+        req.limit,
+        mode,
+        rerank,
+        &req.database,
+        &req.collection,
     )
-    .await
-    .map_err(anyhow::Error::from)?;
+    .await?;
 
     Ok(Json(results))
 }
@@ -63,10 +76,14 @@ pub async fn rag_scoped(
 }
 
 async fn run_rag(state: AppState, mut req: RagRequest) -> ApiResult<Json<RagResponse>> {
-    let pool = state.pool_for(&req.database).await.map_err(anyhow::Error::from)?;
-    let emb_model = req.embedding_model.clone()
+    let pool = state.pool_for(&req.database).await?;
+    let emb_model = req
+        .embedding_model
+        .clone()
         .unwrap_or_else(|| state.embedding_model().to_string());
-    let chat_model = req.model.clone()
+    let chat_model = req
+        .model
+        .clone()
         .unwrap_or_else(|| state.chat_model().to_string());
 
     if req.mode.is_none() {
@@ -74,9 +91,7 @@ async fn run_rag(state: AppState, mut req: RagRequest) -> ApiResult<Json<RagResp
     }
     req.rerank = req.rerank || state.config.rag.rerank;
 
-    let resp = rag_query(&pool, &state.llm, &req, &emb_model, &chat_model)
-        .await
-        .map_err(anyhow::Error::from)?;
+    let resp = rag_query(&pool, &state.llm, &req, &emb_model, &chat_model).await?;
 
     Ok(Json(resp))
 }

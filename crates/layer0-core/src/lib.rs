@@ -16,5 +16,7 @@ pub mod updater;
 mod integration_tests;
 
 pub use config::Config;
-pub use db::{connect, connect_database, cosine_similarity, deserialize_embedding, serialize_embedding};
+pub use db::{
+    connect, connect_database, cosine_similarity, deserialize_embedding, serialize_embedding,
+};
 pub use types::*;

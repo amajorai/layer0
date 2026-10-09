@@ -1,11 +1,10 @@
 use anyhow::{anyhow, Result};
 use reqwest::Client;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 
 use crate::config::UpdateConfig;
-use crate::installer::{download_bytes, GithubRelease};
+use crate::installer::{copy_binary, download_bytes, validate_tar_archive, GithubRelease};
 
 const BINARIES: &[&str] = &["layer0", "layer0-server", "layer0-mcp"];
 
@@ -34,8 +33,14 @@ fn current_version() -> &'static str {
 
 fn parse_version(v: &str) -> (u64, u64, u64) {
     let v = v.trim().trim_start_matches('v');
-    let mut it = v.split(['.', '-', '+']).filter_map(|p| p.parse::<u64>().ok());
-    (it.next().unwrap_or(0), it.next().unwrap_or(0), it.next().unwrap_or(0))
+    let mut it = v
+        .split(['.', '-', '+'])
+        .filter_map(|p| p.parse::<u64>().ok());
+    (
+        it.next().unwrap_or(0),
+        it.next().unwrap_or(0),
+        it.next().unwrap_or(0),
+    )
 }
 
 fn is_newer(remote: &str, local: &str) -> bool {
@@ -47,7 +52,13 @@ async fn fetch_latest(repo: &str) -> Result<GithubRelease> {
         .user_agent(format!("layer0/{}", current_version()))
         .build()?;
     let url = format!("https://api.github.com/repos/{}/releases/latest", repo);
-    let release: GithubRelease = client.get(&url).send().await?.error_for_status()?.json().await?;
+    let release: GithubRelease = client
+        .get(&url)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
     Ok(release)
 }
 
@@ -79,7 +90,11 @@ pub async fn update_now(cfg: &UpdateConfig) -> Result<UpdateOutcome> {
         .find(|a| a.name.contains(target) && a.name.ends_with(ext))
         .ok_or_else(|| anyhow!("no release asset for {} ({})", target, ext))?;
 
-    info!("downloading update {} ({:.1} MB)", asset.name, asset.size as f64 / 1_048_576.0);
+    info!(
+        "downloading update {} ({:.1} MB)",
+        asset.name,
+        asset.size as f64 / 1_048_576.0
+    );
     let client = Client::builder()
         .user_agent(format!("layer0/{}", current_version()))
         .build()?;
@@ -95,11 +110,18 @@ pub async fn update_now(cfg: &UpdateConfig) -> Result<UpdateOutcome> {
     apply_binaries(&extracted)?;
     let _ = std::fs::remove_dir_all(&staging);
 
-    Ok(UpdateOutcome::Updated { from: local, to: release.tag_name })
+    Ok(UpdateOutcome::Updated {
+        from: local,
+        to: release.tag_name,
+    })
 }
 
 fn bin_filename(name: &str) -> String {
-    if cfg!(windows) { format!("{name}.exe") } else { name.to_string() }
+    if cfg!(windows) {
+        format!("{name}.exe")
+    } else {
+        name.to_string()
+    }
 }
 
 fn is_target_binary(entry_name: &str) -> Option<String> {
@@ -119,18 +141,19 @@ fn extract_binaries(bytes: &[u8], archive_name: &str, dest: &Path) -> Result<Vec
 
     if archive_name.ends_with(".zip") {
         let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes))?;
+        anyhow::ensure!(zip.len() <= 4096, "Too many archive entries");
         for i in 0..zip.len() {
             let mut file = zip.by_index(i)?;
             let name = file.name().to_string();
             if let Some(base) = is_target_binary(&name) {
                 let path = dest.join(&base);
-                let mut buf = Vec::new();
-                file.read_to_end(&mut buf)?;
-                std::fs::write(&path, &buf)?;
+                let declared = file.size();
+                copy_binary(&mut file, &path, declared)?;
                 out.push(path);
             }
         }
     } else if archive_name.ends_with(".tar.gz") {
+        validate_tar_archive(bytes)?;
         let gz = flate2::read::GzDecoder::new(std::io::Cursor::new(bytes));
         let mut tar = tar::Archive::new(gz);
         for entry in tar.entries()? {
@@ -138,7 +161,8 @@ fn extract_binaries(bytes: &[u8], archive_name: &str, dest: &Path) -> Result<Vec
             let name = entry.path()?.to_string_lossy().to_string();
             if let Some(base) = is_target_binary(&name) {
                 let path = dest.join(&base);
-                entry.unpack(&path)?;
+                let declared = entry.size();
+                copy_binary(&mut entry, &path, declared)?;
                 out.push(path);
             }
         }
@@ -158,7 +182,10 @@ fn apply_binaries(extracted: &[PathBuf]) -> Result<()> {
     let current_name = current.file_name().map(|s| s.to_string_lossy().to_string());
 
     for src in extracted {
-        let name = src.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        let name = src
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
         let dest = install_dir.join(&name);
 
         if Some(&name) == current_name.as_ref() {

@@ -38,7 +38,11 @@ pub async fn rag_query(
     });
 
     let messages = vec![
-        ChatMessage { role: "system".to_string(), content: system, name: None },
+        ChatMessage {
+            role: "system".to_string(),
+            content: system,
+            name: None,
+        },
         ChatMessage {
             role: "user".to_string(),
             content: format!("Context:\n{}\n\nQuestion: {}", context, request.query),
@@ -47,7 +51,10 @@ pub async fn rag_query(
     ];
 
     let chat_req = ChatCompletionRequest {
-        model: request.model.clone().unwrap_or_else(|| chat_model.to_string()),
+        model: request
+            .model
+            .clone()
+            .unwrap_or_else(|| chat_model.to_string()),
         messages,
         temperature: Some(0.7),
         max_tokens: Some(2048),
@@ -57,9 +64,17 @@ pub async fn rag_query(
     };
 
     let response = llm.chat(&chat_req).await?;
-    let answer = response.choices.first().map(|c| c.message.content.clone()).unwrap_or_default();
+    let answer = response
+        .choices
+        .first()
+        .map(|c| c.message.content.clone())
+        .unwrap_or_default();
 
-    Ok(RagResponse { answer, sources, usage: response.usage })
+    Ok(RagResponse {
+        answer,
+        sources,
+        usage: response.usage,
+    })
 }
 
 fn build_context(results: &[SearchResult]) -> String {
@@ -69,7 +84,13 @@ fn build_context(results: &[SearchResult]) -> String {
         .map(|(i, r)| {
             let src = r.document.source.as_deref().unwrap_or("unknown");
             let text = r.matched_chunk.as_deref().unwrap_or(&r.document.content);
-            format!("[{}] (source: {}, score: {:.3})\n{}", i + 1, src, r.score, text)
+            format!(
+                "[{}] (source: {}, score: {:.3})\n{}",
+                i + 1,
+                src,
+                r.score,
+                text
+            )
         })
         .collect::<Vec<_>>()
         .join("\n\n---\n\n")

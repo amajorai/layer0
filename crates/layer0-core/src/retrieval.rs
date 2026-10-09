@@ -39,17 +39,43 @@ pub async fn retrieve(
     database_name: &str,
     collection_name: &str,
 ) -> Result<Vec<SearchResult>> {
+    anyhow::ensure!(
+        limit <= 100 && query.len() <= 16 * 1024,
+        "Retrieval exceeds work budget"
+    );
     if query.trim().is_empty() || limit == 0 {
         return Ok(vec![]);
     }
 
     let mut results = match mode {
-        RagMode::Vector => fused(pool, llm, query, embedding_model, limit, database_name, collection_name).await?,
+        RagMode::Vector => {
+            fused(
+                pool,
+                llm,
+                query,
+                embedding_model,
+                limit,
+                database_name,
+                collection_name,
+            )
+            .await?
+        }
 
         RagMode::Hybrid => {
-            let mut base = fused(pool, llm, query, embedding_model, limit, database_name, collection_name).await?;
+            let mut base = fused(
+                pool,
+                llm,
+                query,
+                embedding_model,
+                limit,
+                database_name,
+                collection_name,
+            )
+            .await?;
             if let Some(top) = base.first().map(|r| r.document.id.clone()) {
-                let extras = expand_with_graph(pool, &top, 1, database_name, collection_name).await.unwrap_or_default();
+                let extras = expand_with_graph(pool, &top, 1, database_name, collection_name)
+                    .await
+                    .unwrap_or_default();
                 merge(&mut base, extras);
             }
             base
@@ -57,10 +83,23 @@ pub async fn retrieve(
 
         RagMode::Graph => {
             // Vector-seed a few entry points, then return their graph neighborhood.
-            let seeds = search_similar(pool, llm, query, embedding_model, limit, 0.0, database_name, collection_name).await?;
+            let seeds = search_similar(
+                pool,
+                llm,
+                query,
+                embedding_model,
+                limit,
+                0.0,
+                database_name,
+                collection_name,
+            )
+            .await?;
             let mut out: Vec<SearchResult> = Vec::new();
             for seed in seeds.iter().take(3) {
-                let extras = expand_with_graph(pool, &seed.document.id, 2, database_name, collection_name).await.unwrap_or_default();
+                let extras =
+                    expand_with_graph(pool, &seed.document.id, 2, database_name, collection_name)
+                        .await
+                        .unwrap_or_default();
                 merge(&mut out, extras);
             }
             // Include the seeds themselves so a sparse graph still returns something.
@@ -69,6 +108,7 @@ pub async fn retrieve(
         }
     };
 
+    results.truncate(512);
     if rerank_final && results.len() > 1 {
         results = rerank(llm, query, results, embedding_model).await;
     }
@@ -87,8 +127,20 @@ async fn fused(
     database_name: &str,
     collection_name: &str,
 ) -> Result<Vec<SearchResult>> {
-    let vector = search_similar(pool, llm, query, embedding_model, limit * 3, 0.0, database_name, collection_name).await?;
-    let fts = fts_search(pool, query, limit * 2, database_name, collection_name).await.unwrap_or_default();
+    let vector = search_similar(
+        pool,
+        llm,
+        query,
+        embedding_model,
+        limit * 3,
+        0.0,
+        database_name,
+        collection_name,
+    )
+    .await?;
+    let fts = fts_search(pool, query, limit * 2, database_name, collection_name)
+        .await
+        .unwrap_or_default();
     Ok(if fts.is_empty() {
         vector
     } else {
@@ -128,10 +180,24 @@ pub async fn expand_with_graph(
         return Ok(vec![]);
     };
 
-    let g = bfs_traverse(pool, &node_id, depth, None, "both", database_name, collection_name).await?;
+    let g = bfs_traverse(
+        pool,
+        &node_id,
+        depth,
+        None,
+        "both",
+        database_name,
+        collection_name,
+    )
+    .await?;
     Ok(g.documents
         .into_iter()
         .filter(|d| d.id != document_id)
-        .map(|d| SearchResult { document: d, score: 0.5, rerank_score: None, matched_chunk: None })
+        .map(|d| SearchResult {
+            document: d,
+            score: 0.5,
+            rerank_score: None,
+            matched_chunk: None,
+        })
         .collect())
 }

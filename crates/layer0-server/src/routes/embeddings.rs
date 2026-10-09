@@ -17,7 +17,7 @@ pub async fn create_embeddings(
         req.model.clone()
     };
 
-    let embeddings = state.llm.embed(&texts, &model).await.map_err(anyhow::Error::from)?;
+    let embeddings = state.llm.embed(&texts, &model).await?;
 
     Ok(Json(EmbeddingResponse {
         object: "list".to_string(),
@@ -31,6 +31,9 @@ pub async fn create_embeddings(
             })
             .collect(),
         model,
-        usage: EmbeddingUsage { prompt_tokens: token_count, total_tokens: token_count },
+        usage: EmbeddingUsage {
+            prompt_tokens: token_count,
+            total_tokens: token_count,
+        },
     }))
 }

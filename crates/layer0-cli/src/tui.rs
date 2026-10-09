@@ -115,16 +115,16 @@ impl App {
     fn current_value(&self) -> Option<&toml::Value> {
         let idx = self.selected()?;
         let row = self.rows.get(idx)?;
-        self.doc
-            .get(&row.section)?
-            .get(&row.key)
+        self.doc.get(&row.section)?.get(&row.key)
     }
 
     /// Begin inline editing of the focused scalar. Booleans toggle immediately
     /// instead of opening a text input.
     fn begin_edit(&mut self) {
         let Some(idx) = self.selected() else { return };
-        let Some(row) = self.rows.get(idx) else { return };
+        let Some(row) = self.rows.get(idx) else {
+            return;
+        };
         let section = row.section.clone();
         let key = row.key.clone();
 
@@ -139,9 +139,7 @@ impl App {
                 self.modified = true;
                 self.status = Some(format!("{}.{} = {}", section, key, toggled));
             }
-            toml::Value::String(_)
-            | toml::Value::Integer(_)
-            | toml::Value::Float(_) => {
+            toml::Value::String(_) | toml::Value::Integer(_) | toml::Value::Float(_) => {
                 self.editing = Some(value_to_edit_string(val));
                 self.status = None;
             }
@@ -155,9 +153,13 @@ impl App {
     /// Commit the in-progress edit buffer, parsing it back to the original
     /// value's type so we never silently change a number into a string.
     fn commit_edit(&mut self) {
-        let Some(buffer) = self.editing.take() else { return };
+        let Some(buffer) = self.editing.take() else {
+            return;
+        };
         let Some(idx) = self.selected() else { return };
-        let Some(row) = self.rows.get(idx) else { return };
+        let Some(row) = self.rows.get(idx) else {
+            return;
+        };
         let section = row.section.clone();
         let key = row.key.clone();
 
@@ -384,10 +386,7 @@ fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
                 format!("{}.", row.section),
                 Style::default().fg(Color::DarkGray),
             ),
-            Span::styled(
-                row.key.clone(),
-                Style::default().fg(Color::Yellow),
-            ),
+            Span::styled(row.key.clone(), Style::default().fg(Color::Yellow)),
             Span::raw(" = "),
             Span::styled(val, Style::default().fg(Color::Green)),
         ]);

@@ -40,6 +40,14 @@ layer0 search "context" --database myproject
 layer0 db delete-database myproject
 ```
 
+Create named databases explicitly before using them. HTTP and MCP cache at most 64 named database pools; deleting a database closes its cached pool before removing its files. Requests for missing or deleted databases fail until the database is created again.
+
+Document ingestion accepts at most 1 MiB and 256 chunks per document. Chunk sizes must be between 1 and 8192 tokens, with overlap smaller than the chunk size. Retrieval returns at most 100 results; graph traversal is limited to depth 8, 128 nodes, and 512 edges. Requests exceeding traversal budgets fail explicitly.
+
+Model downloads allow two concurrent operations and at most 128 GiB per model. Binary archives are limited to 512 MiB compressed, 4096 entries, 2 GiB declared extraction size, and 256 MiB per binary; links are rejected. Downloads and extraction publish completed files atomically.
+
+`serve --config PATH` and `mcp --config PATH` use the selected configuration. Configure CORS with an explicit origin list, or a sole `"*"`; mixing a wildcard with other origins is rejected.
+
 Set `ANTHROPIC_API_KEY` before `serve` to use Claude for chat/graph extraction instead of the local gemma fallback.
 
 ### For AI agents
