@@ -4,7 +4,7 @@
 [server]
 host = "127.0.0.1"
 port = 8080
-cors_origins = ["*"]
+cors_origins = []
 # Uncomment to require an API key on every request (X-API-Key or Bearer):
 # api_key = "change-me"
 
