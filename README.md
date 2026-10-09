@@ -127,7 +127,7 @@ Environment overrides: `LAYER0__` prefix with double underscores, e.g. `LAYER0__
 [server]
 host = "127.0.0.1"
 port = 8080
-cors_origins = ["*"]
+cors_origins = []
 # api_key = "change-me"
 
 [llm]
@@ -179,7 +179,7 @@ auto_update = false
 |-----|---------|-------------|
 | `host` | `"127.0.0.1"` | Bind address. `"0.0.0.0"` to expose on the network. |
 | `port` | `8080` | HTTP port. |
-| `cors_origins` | `["*"]` | Allowed CORS origins. |
+| `cors_origins` | `[]` | Allowed CORS origins. `["*"]` requires a nonempty server API key. |
 | `api_key` | _(unset)_ | Require `X-API-Key` or `Authorization: Bearer` on all requests except `/health`. |
 
 **`[database]`**

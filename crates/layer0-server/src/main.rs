@@ -32,6 +32,36 @@ struct Args {
     llm_url: Option<String>,
 }
 
+fn cors_allow_origin(config: &Config) -> Result<tower_http::cors::AllowOrigin> {
+    if config.server.cors_origins == ["*"] {
+        anyhow::ensure!(
+            config
+                .server
+                .api_key
+                .as_deref()
+                .is_some_and(|key| !key.trim().is_empty()),
+            "Wildcard CORS requires a nonempty server API key"
+        );
+        return Ok(tower_http::cors::AllowOrigin::any());
+    }
+
+    anyhow::ensure!(
+        !config
+            .server
+            .cors_origins
+            .iter()
+            .any(|origin| origin == "*"),
+        "Wildcard CORS origin must stand alone"
+    );
+    let origins = config
+        .server
+        .cors_origins
+        .iter()
+        .map(|origin| origin.parse::<axum::http::HeaderValue>())
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(tower_http::cors::AllowOrigin::list(origins))
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::registry()
@@ -109,25 +139,7 @@ async fn main() -> Result<()> {
             Method::OPTIONS,
         ])
         .allow_headers(Any)
-        .allow_origin(if config.server.cors_origins == ["*"] {
-            tower_http::cors::AllowOrigin::any()
-        } else {
-            anyhow::ensure!(
-                !config
-                    .server
-                    .cors_origins
-                    .iter()
-                    .any(|origin| origin == "*"),
-                "Wildcard CORS origin must stand alone"
-            );
-            let origins = config
-                .server
-                .cors_origins
-                .iter()
-                .map(|origin| origin.parse::<axum::http::HeaderValue>())
-                .collect::<Result<Vec<_>, _>>()?;
-            tower_http::cors::AllowOrigin::list(origins)
-        });
+        .allow_origin(cors_allow_origin(&config)?);
 
     let app = Router::new()
         // Health
@@ -245,4 +257,24 @@ async fn main() -> Result<()> {
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod cors_tests {
+    use super::*;
+
+    #[test]
+    fn wildcard_requires_authentication_while_safe_origin_modes_remain_valid() {
+        let mut config = Config::default();
+        assert!(cors_allow_origin(&config).is_ok());
+
+        config.server.cors_origins = vec!["https://app.example.com".to_string()];
+        assert!(cors_allow_origin(&config).is_ok());
+
+        config.server.cors_origins = vec!["*".to_string()];
+        assert!(cors_allow_origin(&config).is_err());
+
+        config.server.api_key = Some("secret".to_string());
+        assert!(cors_allow_origin(&config).is_ok());
+    }
 }

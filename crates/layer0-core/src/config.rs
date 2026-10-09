@@ -115,7 +115,7 @@ impl Default for Config {
             server: ServerConfig {
                 host: "127.0.0.1".to_string(),
                 port: 8080,
-                cors_origins: vec!["*".to_string()],
+                cors_origins: Vec::new(),
                 api_key: None,
             },
             database: DatabaseConfig {
@@ -203,7 +203,7 @@ impl Config {
         let mut builder = config::Config::builder()
             .set_default("server.host", default.server.host.clone())?
             .set_default("server.port", default.server.port as i64)?
-            .set_default("server.cors_origins", vec!["*"])?
+            .set_default("server.cors_origins", Vec::<String>::new())?
             .set_default(
                 "database.path",
                 default.database.path.to_string_lossy().as_ref(),
@@ -356,5 +356,15 @@ impl Config {
         }
         std::fs::create_dir_all(self.databases_dir())?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn browser_origins_are_denied_by_default() {
+        assert!(Config::default().server.cors_origins.is_empty());
     }
 }
