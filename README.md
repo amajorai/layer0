@@ -44,6 +44,8 @@ Create named databases explicitly before using them. HTTP and MCP cache at most 
 
 Document ingestion accepts at most 1 MiB and 256 chunks per document. Chunk sizes must be between 1 and 8192 tokens, with overlap smaller than the chunk size. Retrieval returns at most 100 results; graph traversal is limited to depth 8, 128 nodes, and 512 edges. Requests exceeding traversal budgets fail explicitly.
 
+Embedding and graph-extraction requests share a four-request concurrency limit across the server's databases. Additional requests fail immediately with `inference capacity exhausted`; ingestion retains the document and logs the failed enrichment, as it does for other model failures. Capacity becomes available when a request finishes or is canceled.
+
 Model downloads allow two concurrent operations and at most 128 GiB per model. Binary archives are limited to 512 MiB compressed, 4096 entries, 2 GiB declared extraction size, and 256 MiB per binary; links are rejected. Downloads and extraction publish completed files atomically.
 
 `serve --config PATH` and `mcp --config PATH` use the selected configuration. Configure CORS with an explicit origin list, or a sole `"*"`; mixing a wildcard with other origins is rejected.
