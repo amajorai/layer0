@@ -33,10 +33,7 @@ async fn run_search(state: AppState, req: SearchRequest) -> ApiResult<Json<Vec<S
         return Ok(Json(vec![]));
     }
 
-    let pool = state
-        .pool_for(&req.database)
-        .await
-        .map_err(anyhow::Error::from)?;
+    let pool = state.pool_for(&req.database).await?;
     let model = req
         .model
         .as_deref()
@@ -56,8 +53,7 @@ async fn run_search(state: AppState, req: SearchRequest) -> ApiResult<Json<Vec<S
         &req.database,
         &req.collection,
     )
-    .await
-    .map_err(anyhow::Error::from)?;
+    .await?;
 
     Ok(Json(results))
 }
@@ -80,10 +76,7 @@ pub async fn rag_scoped(
 }
 
 async fn run_rag(state: AppState, mut req: RagRequest) -> ApiResult<Json<RagResponse>> {
-    let pool = state
-        .pool_for(&req.database)
-        .await
-        .map_err(anyhow::Error::from)?;
+    let pool = state.pool_for(&req.database).await?;
     let emb_model = req
         .embedding_model
         .clone()
@@ -98,9 +91,7 @@ async fn run_rag(state: AppState, mut req: RagRequest) -> ApiResult<Json<RagResp
     }
     req.rerank = req.rerank || state.config.rag.rerank;
 
-    let resp = rag_query(&pool, &state.llm, &req, &emb_model, &chat_model)
-        .await
-        .map_err(anyhow::Error::from)?;
+    let resp = rag_query(&pool, &state.llm, &req, &emb_model, &chat_model).await?;
 
     Ok(Json(resp))
 }

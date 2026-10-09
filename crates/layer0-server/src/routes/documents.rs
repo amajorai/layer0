@@ -49,14 +49,9 @@ async fn create_document_in(
         state.config.chunking.chunk_overlap,
     )
     .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    let pool = state
-        .pool_for(database)
-        .await
-        .map_err(anyhow::Error::from)?;
+    let pool = state.pool_for(database).await?;
 
-    ensure_collection(&pool, database, collection)
-        .await
-        .map_err(anyhow::Error::from)?;
+    ensure_collection(&pool, database, collection).await?;
 
     let id = Uuid::new_v4().to_string();
     let now = now_str();
@@ -120,16 +115,12 @@ async fn create_document_in(
                 collection_name: collection.to_string(),
                 created_at: Utc::now(),
             };
-            create_node(&pool, &node)
-                .await
-                .map_err(anyhow::Error::from)?;
+            create_node(&pool, &node).await?;
 
             if let Some(edges) = &node_req.edges {
                 for er in edges {
                     let targets =
-                        find_nodes_by_label(&pool, &er.target_label, database, collection)
-                            .await
-                            .map_err(anyhow::Error::from)?;
+                        find_nodes_by_label(&pool, &er.target_label, database, collection).await?;
 
                     let target_id = if let Some(t) = targets.first() {
                         t.id.clone()
@@ -144,7 +135,7 @@ async fn create_document_in(
                             created_at: Utc::now(),
                         };
                         let tid = t.id.clone();
-                        create_node(&pool, &t).await.map_err(anyhow::Error::from)?;
+                        create_node(&pool, &t).await?;
                         tid
                     };
 
@@ -160,8 +151,7 @@ async fn create_document_in(
                             created_at: Utc::now(),
                         },
                     )
-                    .await
-                    .map_err(anyhow::Error::from)?;
+                    .await?;
                 }
             }
         }
@@ -183,10 +173,7 @@ pub async fn get_document(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<Json<Document>> {
-    match fetch_document(&state.pool, &id)
-        .await
-        .map_err(anyhow::Error::from)?
-    {
+    match fetch_document(&state.pool, &id).await? {
         Some(doc) => Ok(Json(doc)),
         None => Err(ApiError::NotFound(format!("document {} not found", id))),
     }
@@ -196,9 +183,7 @@ pub async fn delete_document(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    layer0_core::embedding::purge_document_vectors(&state.pool, &id)
-        .await
-        .map_err(anyhow::Error::from)?;
+    layer0_core::embedding::purge_document_vectors(&state.pool, &id).await?;
     let r = sqlx::query("DELETE FROM documents WHERE id = ?")
         .bind(&id)
         .execute(&state.pool)
@@ -241,10 +226,7 @@ async fn list_documents_in(
     let limit = q.limit.unwrap_or(20).clamp(1, 100);
     let offset = q.offset.unwrap_or(0).max(0);
 
-    let pool = state
-        .pool_for(database)
-        .await
-        .map_err(anyhow::Error::from)?;
+    let pool = state.pool_for(database).await?;
 
     #[derive(sqlx::FromRow)]
     struct Row {
@@ -303,7 +285,7 @@ async fn get_stats_in(
     let (doc_count, emb_count, node_count) =
         match (database, collection) {
             (Some(db), Some(col)) => {
-                let pool = state.pool_for(db).await.map_err(anyhow::Error::from)?;
+                let pool = state.pool_for(db).await?;
 
                 let doc: i64 = sqlx::query_scalar(
                 "SELECT COUNT(*) FROM documents WHERE database_name = ? AND collection_name = ?"

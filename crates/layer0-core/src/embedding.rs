@@ -114,6 +114,7 @@ pub async fn purge_collection_vectors(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn search_similar(
     pool: &SqlitePool,
     llm: &LlmClient,

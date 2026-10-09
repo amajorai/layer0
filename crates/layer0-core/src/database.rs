@@ -193,10 +193,10 @@ pub async fn delete_database(
                 canonical.display()
             ));
         }
-        std::fs::remove_file(&canonical)?;
+        remove_database_file(&canonical).await?;
         for suffix in ["-wal", "-shm"] {
             let sidecar = config.databases_dir().join(format!("{name}.db{suffix}"));
-            match std::fs::remove_file(sidecar) {
+            match remove_database_file(&sidecar).await {
                 Ok(()) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => return Err(error.into()),
@@ -204,6 +204,27 @@ pub async fn delete_database(
         }
     }
     Ok(r.rows_affected() > 0)
+}
+
+async fn remove_database_file(path: &std::path::Path) -> std::io::Result<()> {
+    const WINDOWS_SHARING_VIOLATION: i32 = 32;
+    const MAX_ATTEMPTS: usize = 20;
+
+    for attempt in 1..=MAX_ATTEMPTS {
+        match std::fs::remove_file(path) {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if cfg!(windows)
+                    && error.raw_os_error() == Some(WINDOWS_SHARING_VIOLATION)
+                    && attempt < MAX_ATTEMPTS =>
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    unreachable!("the final removal attempt always returns")
 }
 
 pub async fn list_collections(pool: &SqlitePool, database_name: &str) -> Result<Vec<Collection>> {

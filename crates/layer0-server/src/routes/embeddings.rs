@@ -17,11 +17,7 @@ pub async fn create_embeddings(
         req.model.clone()
     };
 
-    let embeddings = state
-        .llm
-        .embed(&texts, &model)
-        .await
-        .map_err(anyhow::Error::from)?;
+    let embeddings = state.llm.embed(&texts, &model).await?;
 
     Ok(Json(EmbeddingResponse {
         object: "list".to_string(),

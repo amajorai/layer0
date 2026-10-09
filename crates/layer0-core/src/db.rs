@@ -12,8 +12,15 @@ static VEC_INIT: Once = Once::new();
 /// `vec0` virtual table module. Must run before any connection is created.
 fn register_sqlite_vec() {
     VEC_INIT.call_once(|| unsafe {
-        libsqlite3_sys::sqlite3_auto_extension(Some(std::mem::transmute(
-            sqlite_vec::sqlite3_vec_init as *const (),
+        libsqlite3_sys::sqlite3_auto_extension(Some(std::mem::transmute::<
+            *const (),
+            unsafe extern "C" fn(
+                *mut libsqlite3_sys::sqlite3,
+                *mut *const std::ffi::c_char,
+                *const libsqlite3_sys::sqlite3_api_routines,
+            ) -> std::ffi::c_int,
+        >(
+            sqlite_vec::sqlite3_vec_init as *const ()
         )));
     });
 }
@@ -312,8 +319,9 @@ pub fn serialize_embedding(embedding: &[f32]) -> Vec<u8> {
 }
 
 pub fn deserialize_embedding(bytes: &[u8]) -> Vec<f32> {
-    bytes
-        .chunks_exact(4)
+    let (chunks, _) = bytes.as_chunks::<4>();
+    chunks
+        .iter()
         .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect()
 }

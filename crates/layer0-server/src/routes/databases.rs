@@ -14,11 +14,7 @@ use crate::routes::{ApiError, ApiResult};
 use crate::state::AppState;
 
 pub async fn list_databases_route(State(state): State<AppState>) -> ApiResult<Json<Vec<Database>>> {
-    Ok(Json(
-        list_databases(&state.pool)
-            .await
-            .map_err(anyhow::Error::from)?,
-    ))
+    Ok(Json(list_databases(&state.pool).await?))
 }
 
 pub async fn create_database_route(
@@ -34,8 +30,7 @@ pub async fn create_database_route(
         &req.name,
         req.description.as_deref(),
     )
-    .await
-    .map_err(anyhow::Error::from)?;
+    .await?;
     Ok(Json(db))
 }
 
@@ -43,10 +38,7 @@ pub async fn get_database_route(
     State(state): State<AppState>,
     Path(database): Path<String>,
 ) -> ApiResult<Json<Database>> {
-    match get_database(&state.pool, &database)
-        .await
-        .map_err(anyhow::Error::from)?
-    {
+    match get_database(&state.pool, &database).await? {
         Some(db) => Ok(Json(db)),
         None => Err(ApiError::NotFound(format!(
             "database '{}' not found",
@@ -59,10 +51,7 @@ pub async fn delete_database_route(
     State(state): State<AppState>,
     Path(database): Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    state
-        .delete_database(&database)
-        .await
-        .map_err(anyhow::Error::from)?;
+    state.delete_database(&database).await?;
     Ok(Json(
         serde_json::json!({ "deleted": true, "database": database }),
     ))
@@ -72,11 +61,7 @@ pub async fn list_collections_route(
     State(state): State<AppState>,
     Path(database): Path<String>,
 ) -> ApiResult<Json<Vec<Collection>>> {
-    Ok(Json(
-        list_collections(&state.pool, &database)
-            .await
-            .map_err(anyhow::Error::from)?,
-    ))
+    Ok(Json(list_collections(&state.pool, &database).await?))
 }
 
 pub async fn create_collection_route(
@@ -95,8 +80,7 @@ pub async fn create_collection_route(
         &req.name,
         req.description.as_deref(),
     )
-    .await
-    .map_err(anyhow::Error::from)?;
+    .await?;
     Ok(Json(col))
 }
 
@@ -104,10 +88,7 @@ pub async fn get_collection_route(
     State(state): State<AppState>,
     Path((database, collection)): Path<(String, String)>,
 ) -> ApiResult<Json<Collection>> {
-    match get_collection(&state.pool, &database, &collection)
-        .await
-        .map_err(anyhow::Error::from)?
-    {
+    match get_collection(&state.pool, &database, &collection).await? {
         Some(col) => Ok(Json(col)),
         None => Err(ApiError::NotFound(format!(
             "collection '{}/{}' not found",
@@ -121,9 +102,7 @@ pub async fn delete_collection_route(
     Path((database, collection)): Path<(String, String)>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let data_pool = state.pool_for(&database).await?;
-    delete_collection(&data_pool, &database, &collection)
-        .await
-        .map_err(anyhow::Error::from)?;
+    delete_collection(&data_pool, &database, &collection).await?;
     sqlx::query("DELETE FROM collections WHERE database_name = ? AND name = ?")
         .bind(&database)
         .bind(&collection)

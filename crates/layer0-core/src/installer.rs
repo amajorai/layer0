@@ -535,6 +535,7 @@ async fn wait_for_health(base_url: &str, max_secs: u64) -> bool {
 /// children (kept alive by the caller). Starts:
 /// - an embeddings sidecar (nomic) when embeddings are configured locally;
 /// - a chat sidecar (gemma fallback) when no remote chat key is set.
+///
 /// Returns an empty list when auto-start is disabled.
 pub async fn ensure_ready(config: &crate::config::Config) -> Result<Vec<LlamaServer>> {
     if !config.installer.auto_start {

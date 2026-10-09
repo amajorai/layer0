@@ -70,9 +70,7 @@ pub async fn download_model(
         .hf_token
         .as_deref()
         .or(state.config.installer.hf_token.as_deref());
-    let path = download_hf_model(&state.config.installer, &req.repo, &req.filename, token)
-        .await
-        .map_err(anyhow::Error::from)?;
+    let path = download_hf_model(&state.config.installer, &req.repo, &req.filename, token).await?;
 
     let name = path
         .file_stem()
@@ -134,9 +132,7 @@ pub async fn delete_model(
 }
 
 pub async fn install_llama(State(state): State<AppState>) -> ApiResult<Json<serde_json::Value>> {
-    let dir = install_llama_cpp(&state.config.installer)
-        .await
-        .map_err(anyhow::Error::from)?;
+    let dir = install_llama_cpp(&state.config.installer).await?;
     Ok(Json(
         serde_json::json!({ "installed": true, "bin_dir": dir.display().to_string() }),
     ))

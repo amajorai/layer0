@@ -33,9 +33,7 @@ pub async fn create_node_route(
         collection_name: "default".to_string(),
         created_at: Utc::now(),
     };
-    create_node(&state.pool, &node)
-        .await
-        .map_err(anyhow::Error::from)?;
+    create_node(&state.pool, &node).await?;
     Ok(Json(node))
 }
 
@@ -44,10 +42,7 @@ pub async fn create_node_scoped(
     Path((database, collection)): Path<(String, String)>,
     Json(req): Json<GraphNode>,
 ) -> ApiResult<Json<GraphNode>> {
-    let pool = state
-        .pool_for(&database)
-        .await
-        .map_err(anyhow::Error::from)?;
+    let pool = state.pool_for(&database).await?;
     let node = GraphNode {
         id: if req.id.is_empty() {
             Uuid::new_v4().to_string()
@@ -61,9 +56,7 @@ pub async fn create_node_scoped(
         collection_name: collection,
         created_at: Utc::now(),
     };
-    create_node(&pool, &node)
-        .await
-        .map_err(anyhow::Error::from)?;
+    create_node(&pool, &node).await?;
     Ok(Json(node))
 }
 
@@ -71,10 +64,7 @@ pub async fn get_node_route(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<Json<GraphNode>> {
-    match get_node(&state.pool, &id)
-        .await
-        .map_err(anyhow::Error::from)?
-    {
+    match get_node(&state.pool, &id).await? {
         Some(n) => Ok(Json(n)),
         None => Err(ApiError::NotFound(format!("node {} not found", id))),
     }
@@ -84,10 +74,7 @@ pub async fn delete_node_route(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    if delete_node(&state.pool, &id)
-        .await
-        .map_err(anyhow::Error::from)?
-    {
+    if delete_node(&state.pool, &id).await? {
         Ok(Json(serde_json::json!({ "deleted": true, "id": id })))
     } else {
         Err(ApiError::NotFound(format!("node {} not found", id)))
@@ -111,9 +98,7 @@ pub async fn create_edge_route(
         properties: req.properties,
         created_at: Utc::now(),
     };
-    create_edge(&state.pool, &edge)
-        .await
-        .map_err(anyhow::Error::from)?;
+    create_edge(&state.pool, &edge).await?;
     Ok(Json(edge))
 }
 
@@ -121,10 +106,7 @@ pub async fn delete_edge_route(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    if delete_edge(&state.pool, &id)
-        .await
-        .map_err(anyhow::Error::from)?
-    {
+    if delete_edge(&state.pool, &id).await? {
         Ok(Json(serde_json::json!({ "deleted": true, "id": id })))
     } else {
         Err(ApiError::NotFound(format!("edge {} not found", id)))
@@ -155,14 +137,13 @@ async fn run_graph_query(
     let db = &req.database;
     let col = &req.collection;
 
-    let pool = state.pool_for(db).await.map_err(anyhow::Error::from)?;
+    let pool = state.pool_for(db).await?;
 
     let start_id = if let Some(id) = &req.start_node_id {
         id.clone()
     } else if let Some(label) = &req.start_label {
         find_nodes_by_label(&pool, label, db, col)
-            .await
-            .map_err(anyhow::Error::from)?
+            .await?
             .into_iter()
             .next()
             .map(|n| n.id)
@@ -183,8 +164,7 @@ async fn run_graph_query(
         db,
         col,
     )
-    .await
-    .map_err(anyhow::Error::from)?;
+    .await?;
 
     Ok(Json(result))
 }
@@ -207,8 +187,7 @@ pub async fn list_nodes_route(
             "default",
             "default",
         )
-        .await
-        .map_err(anyhow::Error::from)?,
+        .await?,
     ))
 }
 
@@ -217,10 +196,7 @@ pub async fn list_nodes_scoped(
     Path((database, collection)): Path<(String, String)>,
     Query(q): Query<ListQuery>,
 ) -> ApiResult<Json<Vec<GraphNode>>> {
-    let pool = state
-        .pool_for(&database)
-        .await
-        .map_err(anyhow::Error::from)?;
+    let pool = state.pool_for(&database).await?;
     Ok(Json(
         list_nodes(
             &pool,
@@ -229,8 +205,7 @@ pub async fn list_nodes_scoped(
             &database,
             &collection,
         )
-        .await
-        .map_err(anyhow::Error::from)?,
+        .await?,
     ))
 }
 
@@ -239,9 +214,7 @@ pub async fn list_edges_route(
     Query(q): Query<ListQuery>,
 ) -> ApiResult<Json<Vec<GraphEdge>>> {
     Ok(Json(
-        list_edges(&state.pool, q.limit.unwrap_or(50), q.offset.unwrap_or(0))
-            .await
-            .map_err(anyhow::Error::from)?,
+        list_edges(&state.pool, q.limit.unwrap_or(50), q.offset.unwrap_or(0)).await?,
     ))
 }
 
@@ -250,10 +223,7 @@ pub async fn list_edges_scoped(
     Path((database, collection)): Path<(String, String)>,
     Query(q): Query<ListQuery>,
 ) -> ApiResult<Json<Vec<GraphEdge>>> {
-    let pool = state
-        .pool_for(&database)
-        .await
-        .map_err(anyhow::Error::from)?;
+    let pool = state.pool_for(&database).await?;
     Ok(Json(
         list_edges_in_collection(
             &pool,
@@ -262,7 +232,6 @@ pub async fn list_edges_scoped(
             &database,
             &collection,
         )
-        .await
-        .map_err(anyhow::Error::from)?,
+        .await?,
     ))
 }
